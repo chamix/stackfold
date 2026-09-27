@@ -1,0 +1,54 @@
+{
+  "name": "stackfold",
+  "version": "0.1.0",
+  "description": "Stack-agnostic scaffolding CLI with a plugin-based generator system.",
+  "main": "./dist/core/index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli/index.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "scaffolding",
+    "cli",
+    "generator",
+    "plugin",
+    "electron",
+    "typescript"
+  ],
+  "author": "Camilo Vera",
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2",
+    "commander": "^15.0.0",
+    "cosmiconfig": "^10.0.1",
+    "execa": "^10.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@typescript-eslint/parser": "^8.70.1",
+    "eslint": "^10.11.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.2"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chamix/stackfold.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chamix/stackfold/issues"
+  },
+  "homepage": "https://github.com/chamix/stackfold#readme",
+  "bin": {
+    "stackfold": "./dist/cli/index.js"
+  }
+}
