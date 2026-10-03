@@ -121,6 +121,23 @@ const lines = (...rows: string[]): string => `${rows.join('\n')}\n`;
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const hasAuthor = (ctx: ResolvedContext): boolean => ctx.author !== '';
 
+/**
+ * Escapes the five characters that matter for free text placed inside an
+ * HTML text node or a double-quoted attribute (`&` first, so it never
+ * double-escapes the entities it just produced). Required anywhere a
+ * free-text answer (appName, description) is interpolated into generated
+ * HTML — mirrors Cycle A's "no free-text answer is ever interpolated
+ * unescaped" invariant, extended here from `.ts`/JSON contexts to HTML.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderPackageJson(ctx: ResolvedContext): string {
   return json({
     name: ctx.packageName,
@@ -131,7 +148,8 @@ function renderPackageJson(ctx: ResolvedContext): string {
     ...(hasAuthor(ctx) ? { author: ctx.author, license: 'MIT' } : {}),
     main: 'dist/main/index.js',
     scripts: {
-      build: 'tsc -p tsconfig.json',
+      build: 'node scripts/build.mjs',
+      package: 'electron-builder',
       typecheck: 'tsc --noEmit -p tsconfig.typecheck.json',
       test: 'vitest run',
     },
@@ -140,6 +158,8 @@ function renderPackageJson(ctx: ResolvedContext): string {
       typescript: '^6.0.3',
       vitest: '^5.0.2',
       '@types/node': '^24.19.0',
+      esbuild: '^0.28.2',
+      'electron-builder': '^26.15.3',
     },
   });
 }
@@ -407,7 +427,109 @@ function renderPreloadIndex(ctx: ResolvedContext): string {
 
 const constant = (content: string) => (): string => content;
 
-/** Cycle A file set, in emission order. Adding a file = adding an entry. */
+/**
+ * Deliberately inert placeholder renderer (initial_scaffold.md — Cycle B1):
+ * no inline `<script>` — pointless under `sandbox: true`/`contextIsolation`
+ * with zero bridge operations to call (functional_domain.md §1 "Build/CI
+ * shape" — the asset set must include *something* `main/index.ts` can load
+ * as window content, not a real UI; Tier 3 replaces this entirely).
+ *
+ * No tool/plugin self-attribution here (functional_domain.md §3.4 "no
+ * branding leakage" — enforced literally, no exception): content is a pure
+ * function of this project's own resolved context only.
+ */
+function renderRendererIndexHtml(ctx: ResolvedContext): string {
+  const appName = escapeHtml(ctx.appName);
+  const description = escapeHtml(ctx.description);
+  return lines(
+    '<!doctype html>',
+    '<html>',
+    '  <head>',
+    '    <meta charset="utf-8" />',
+    `    <title>${appName}</title>`,
+    '    <link rel="stylesheet" href="./app.css" />',
+    '  </head>',
+    '  <body>',
+    '    <main>',
+    `      <h1>${appName}</h1>`,
+    `      <p>${description}</p>`,
+    '    </main>',
+    '  </body>',
+    '</html>',
+  );
+}
+
+const RENDERER_CSS = lines(
+  'html, body {',
+  '  height: 100%;',
+  '  margin: 0;',
+  '  display: flex;',
+  '  align-items: center;',
+  '  justify-content: center;',
+  '  font-family: system-ui, sans-serif;',
+  '  text-align: center;',
+  '}',
+);
+
+/**
+ * The explicit asset manifest the handoff asked for (§5.1) — generated
+ * *output* a scaffolded project runs, not stackfold's own build (SOLID
+ * Boundary Scan, Cycle B1 spec). `format: 'cjs'` is required, not a style
+ * choice: `sandbox: true` loads the preload as CommonJS, never ESM.
+ */
+const BUILD_SCRIPT = lines(
+  '#!/usr/bin/env node',
+  "import { execSync } from 'node:child_process';",
+  "import { cpSync, mkdirSync } from 'node:fs';",
+  "import { dirname } from 'node:path';",
+  "import { build as esbuildBuild } from 'esbuild';",
+  '',
+  "execSync('tsc -p tsconfig.json', { stdio: 'inherit' });",
+  '',
+  'await esbuildBuild({',
+  "  entryPoints: ['src/preload/index.ts'],",
+  "  outfile: 'dist/preload/index.js',",
+  '  bundle: true,',
+  "  platform: 'node',",
+  "  format: 'cjs', // required: sandbox: true loads the preload as CJS",
+  "  external: ['electron'],",
+  '});',
+  '',
+  '// Explicit asset manifest (handoff debt item #1) — add an entry here,',
+  '// never a bare `cp -r` in package.json, when renderer assets grow.',
+  'const ASSETS = [',
+  "  ['src/renderer/index.html', 'dist/renderer/index.html'],",
+  "  ['src/renderer/app.css', 'dist/renderer/app.css'],",
+  '];',
+  'for (const [from, to] of ASSETS) {',
+  '  mkdirSync(dirname(to), { recursive: true });',
+  '  cpSync(from, to);',
+  '}',
+);
+
+/**
+ * `publish: null`, not `github`, deliberately (Cycle B1 spec): a freshly
+ * scaffolded project has no repo/releases to publish to yet. appId and
+ * productName are JSON-quoted so free-text answers can never break the
+ * YAML document's structure.
+ */
+function renderElectronBuilderYml(ctx: ResolvedContext): string {
+  return lines(
+    `appId: ${JSON.stringify(ctx.appId)}`,
+    `productName: ${JSON.stringify(ctx.appName)}`,
+    'directories:',
+    '  output: release',
+    'files:',
+    '  - dist/**',
+    'win:',
+    '  target:',
+    '    - nsis',
+    '    - portable',
+    'publish: null',
+  );
+}
+
+/** Cycle A + B1 file set, in emission order. Adding a file = adding an entry. */
 export const TIER1_FILES: readonly TierFile[] = [
   { path: 'package.json', render: renderPackageJson },
   { path: 'README.md', render: renderReadme },
@@ -422,4 +544,8 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'src/main/index.ts', render: constant(MAIN_INDEX) },
   { path: 'src/preload/api.ts', render: renderPreloadApi },
   { path: 'src/preload/index.ts', render: renderPreloadIndex },
+  { path: 'src/renderer/index.html', render: renderRendererIndexHtml },
+  { path: 'src/renderer/app.css', render: constant(RENDERER_CSS) },
+  { path: 'scripts/build.mjs', render: constant(BUILD_SCRIPT) },
+  { path: 'electron-builder.yml', render: renderElectronBuilderYml },
 ];

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
@@ -33,6 +33,10 @@ const TIER1_PATHS = [
   'src/main/index.ts',
   'src/preload/api.ts',
   'src/preload/index.ts',
+  'src/renderer/index.html',
+  'src/renderer/app.css',
+  'scripts/build.mjs',
+  'electron-builder.yml',
 ];
 
 function question(id: string): QuestionDefinition {
@@ -178,7 +182,7 @@ describe('electron-ts plugin — buildBlueprint() is pure and synchronous', () =
 });
 
 describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', () => {
-  it('emits exactly the Cycle A file set, in order, when an author is given', () => {
+  it('emits exactly the expected file set, in order, when an author is given', () => {
     expect(plugin.buildBlueprint(ANSWERS).files.map((f) => f.path)).toEqual(TIER1_PATHS);
   });
 
@@ -215,8 +219,12 @@ describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', 
       typescript: '^6.0.3',
       vitest: '^5.0.2',
       '@types/node': '^24.19.0',
+      esbuild: '^0.28.2',
+      'electron-builder': '^26.15.3',
     });
     expect(pkg.scripts).toMatchObject({
+      build: 'node scripts/build.mjs',
+      package: 'electron-builder',
       typecheck: 'tsc --noEmit -p tsconfig.typecheck.json',
       test: 'vitest run',
     });
@@ -362,6 +370,58 @@ describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', 
     expect(src).toContain('const api: BridgeApi = {};');
     expect(src.match(/exposeInMainWorld/g)).toHaveLength(1);
     expect(src).not.toContain('ipcRenderer');
+  });
+
+  it('renderer index.html is an inert placeholder: no inline <script>, names the app, no Tier-1 UI claim', () => {
+    const html = fileContent(ANSWERS, 'src/renderer/index.html');
+    expect(html).not.toContain('<script');
+    expect(html).toContain('<title>My Cool App!</title>');
+    expect(html).toContain('<h1>My Cool App!</h1>');
+    expect(html).toContain('<p>A demo app</p>');
+    expect(html).toContain('<link rel="stylesheet" href="./app.css" />');
+  });
+
+  it('renderer index.html escapes HTML-breaking appName/description instead of interpolating them raw', () => {
+    const html = fileContent(
+      {
+        appName: '<script>alert(1)</script>',
+        description: '"><img src=x onerror=alert(1)>',
+      },
+      'src/renderer/index.html'
+    );
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('renderer app.css centers the placeholder content', () => {
+    const css = fileContent(ANSWERS, 'src/renderer/app.css');
+    expect(css).toContain('align-items: center');
+    expect(css).toContain('justify-content: center');
+  });
+
+  it('scripts/build.mjs compiles main with tsc, bundles preload as CJS with esbuild, and copies renderer assets via an explicit manifest (handoff §5.1)', () => {
+    const script = fileContent(ANSWERS, 'scripts/build.mjs');
+    expect(script).toContain("execSync('tsc -p tsconfig.json'");
+    expect(script).toContain("import { build as esbuildBuild } from 'esbuild';");
+    expect(script).toContain("entryPoints: ['src/preload/index.ts']");
+    expect(script).toContain("format: 'cjs'");
+    expect(script).toContain("external: ['electron']");
+    expect(script).toContain('const ASSETS = [');
+    expect(script).toContain("['src/renderer/index.html', 'dist/renderer/index.html']");
+    expect(script).toContain("['src/renderer/app.css', 'dist/renderer/app.css']");
+    expect(script).not.toContain("execSync('cp");
+  });
+
+  it('electron-builder.yml targets Windows nsis+portable and never publishes (publish: null, not github)', () => {
+    const yml = fileContent(ANSWERS, 'electron-builder.yml');
+    expect(yml).toContain('appId: "com.my-cool-app.app"');
+    expect(yml).toContain('productName: "My Cool App!"');
+    expect(yml).toContain('- nsis');
+    expect(yml).toContain('- portable');
+    expect(yml).toContain('publish: null');
+    expect(yml).not.toContain('github');
   });
 
   it('no free-text answer is ever interpolated into generated TypeScript', () => {
@@ -598,6 +658,78 @@ function runTsc(tscBin: string, config: string): Promise<{ code: number; output:
     });
   });
 }
+
+function execNpm(args: string[], cwd: string, timeout: number): Promise<{ code: number; output: string }> {
+  // On Windows `npm` resolves to a `.cmd` shim, which execFile cannot spawn
+  // directly (EINVAL). Route through `cmd.exe /c` explicitly (fixed args,
+  // no untrusted input) rather than the `shell: true` option, which would
+  // concatenate args into an unescaped string.
+  const [cmd, cmdArgs] = process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', 'npm', ...args]] : ['npm', args];
+  return new Promise((resolvePromise) => {
+    execFile(cmd, cmdArgs, { cwd, timeout, windowsHide: true }, (error, stdout, stderr) => {
+      const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+      resolvePromise({ code, output: `${stdout}${stderr}`.trim() });
+    });
+  });
+}
+
+/**
+ * Opt-in only (per initial_scaffold.md Cycle B1's own suggestion): this is
+ * the one test in the suite that does real network I/O, so it must never
+ * silently run — and never silently flake — in a network-restricted
+ * environment. Set `STACKFOLD_RUN_NETWORK_TESTS=1` to enable it.
+ */
+const RUN_NETWORK_TESTS = process.env['STACKFOLD_RUN_NETWORK_TESTS'] === '1';
+if (!RUN_NETWORK_TESTS) {
+  // eslint-disable-next-line no-console
+  console.info(
+    'electron-ts plugin — build integrity (tier 4): skipped — set STACKFOLD_RUN_NETWORK_TESTS=1 to run the real `npm install` + `npm run build` check.'
+  );
+}
+
+describe.skipIf(!RUN_NETWORK_TESTS)('electron-ts plugin — build integrity (tier 4: real npm install + build)', () => {
+  // This is the test that would have caught the Cycle A gap: a project
+  // that type-checks but has nothing for `main/index.ts`'s RENDERER_URL to
+  // load. `npm install` and `npm run build` run for real, against the
+  // actual generated package.json/build.mjs — not a stand-in.
+  it(
+    'npm install + npm run build produces dist/main/index.js, dist/preload/index.js and dist/renderer/index.html',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'stackfold-electron-ts-build-'));
+      try {
+        const projectDir = join(root, 'generated');
+        const writer = new NodeFileWriter();
+        await writer.ensureEmptyDir(projectDir);
+        for (const file of plugin.buildBlueprint(ANSWERS).files) {
+          await writer.writeFile(join(projectDir, file.path), file.content);
+        }
+
+        // --ignore-scripts: this test proves the *build pipeline* (tsc +
+        // esbuild + the explicit asset manifest) actually produces runnable
+        // output via real registry resolution. It deliberately skips
+        // `electron`'s own postinstall (which downloads the ~100s-of-MB
+        // Electron binary) and electron-builder's signing-tool postinstall
+        // — neither is exercised by `npm run build` (only by the separate
+        // `npm run package`, out of scope for Cycle B1), so downloading them
+        // here would only make this test slower and more network-flake-prone
+        // without strengthening what it proves.
+        const install = await execNpm(['install', '--ignore-scripts', '--no-audit', '--no-fund'], projectDir, 8 * 60_000);
+        expect(install.code, `npm install failed:\n${install.output}`).toBe(0);
+
+        const build = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
+        expect(build.code, `npm run build failed:\n${build.output}`).toBe(0);
+
+        for (const relPath of ['dist/main/index.js', 'dist/preload/index.js', 'dist/renderer/index.html']) {
+          const info = await stat(join(projectDir, relPath));
+          expect(info.isFile(), `expected ${relPath} to exist after build`).toBe(true);
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    10 * 60_000
+  );
+});
 
 describe('electron-ts plugin — end-to-end through the orchestrator (in-memory ports)', () => {
   it('scaffolds the Tier-1 file set through the full Template Method pipeline', async () => {
