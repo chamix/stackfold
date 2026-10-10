@@ -518,7 +518,7 @@ describe('electron-ts plugin — self-healing persisted-file behavior (real emit
     it('missing file: loadSettingsAtStartup keeps in-memory defaults and writes nothing', async () => {
       const mod = await import(pathToFileURL(join(dir, 'settingsStore.js')).href);
       await mod.loadSettingsAtStartup();
-      expect(mod.getSettings()).toEqual({ showFrontmatter: true, showFileTree: true, darkMode: false });
+      expect(mod.getSettings()).toEqual({ darkMode: false });
       await expect(stat(join(userDataDir, 'settings.json'))).rejects.toThrow();
     });
 
@@ -526,7 +526,7 @@ describe('electron-ts plugin — self-healing persisted-file behavior (real emit
       await writeFile(join(userDataDir, 'settings.json'), '{ not valid json');
       const mod = await import(pathToFileURL(join(dir, 'settingsStore.js')).href + '?corrupt=1');
       await mod.loadSettingsAtStartup();
-      expect(mod.getSettings()).toEqual({ showFrontmatter: true, showFileTree: true, darkMode: false });
+      expect(mod.getSettings()).toEqual({ darkMode: false });
       await expect(stat(join(userDataDir, 'settings.json.bak'))).rejects.toThrow();
     });
 
@@ -561,7 +561,7 @@ describe('electron-ts plugin — self-healing persisted-file behavior (real emit
 
       ipcMod.trustWebContents(9002);
       const trustedEvent = { sender: { id: 9002 } };
-      expect(registration.cb(trustedEvent)).toEqual({ showFrontmatter: true, showFileTree: true, darkMode: false });
+      expect(registration.cb(trustedEvent)).toEqual({ darkMode: false });
     });
   });
 
