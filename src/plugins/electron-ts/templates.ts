@@ -273,6 +273,12 @@ function renderLicense(ctx: ResolvedContext): string {
   );
 }
 
+/**
+ * Single shared tsconfig — emitted only when `ctx.includeSettings` is
+ * false (no renderer `.ts` file exists in that case, so there is nothing
+ * to decouple per-process). Byte-identical to the project's original
+ * baseline (initial_scaffold.md "Revised plan for Open Decision 1").
+ */
 const TSCONFIG = json({
   compilerOptions: {
     target: 'ES2023',
@@ -292,18 +298,118 @@ const TSCONFIG = json({
 });
 
 /**
- * `tsconfig.json` above is also the build config (`tsc -p tsconfig.json`
- * emits to `dist/`), so its `include`/`rootDir` can't widen to cover
- * `tests/**` and `vitest.config.ts` without tests landing in `dist/`. This
- * sibling, noEmit-only config is what `npm run typecheck` actually runs
- * against, so the generated project's own tests and vitest config are
- * type-checked too.
+ * Per-process tsconfig split (Option B, approved 2026-10-10) — emitted
+ * only when `ctx.includeSettings` is true, replacing the single
+ * `tsconfig.json` above. `tsconfig.base.json` holds only the options
+ * every process shares; `lib`/`types`/`outDir`/`rootDir`/`include` differ
+ * per process and live in the two files below it, so Node/Electron
+ * ambient types never leak into renderer scope and DOM lib never leaks
+ * into main/preload scope.
+ */
+const TSCONFIG_BASE = json({
+  compilerOptions: {
+    target: 'ES2023',
+    module: 'NodeNext',
+    moduleResolution: 'NodeNext',
+    strict: true,
+    noUncheckedIndexedAccess: true,
+    esModuleInterop: true,
+    forceConsistentCasingInFileNames: true,
+    skipLibCheck: true,
+  },
+});
+
+const TSCONFIG_MAIN = json({
+  extends: './tsconfig.base.json',
+  compilerOptions: {
+    lib: ['ES2023'],
+    types: ['node', 'electron'],
+    outDir: 'dist',
+    rootDir: 'src',
+  },
+  include: ['src/main/**/*.ts', 'src/preload/**/*.ts'],
+});
+
+/**
+ * Renderer output is loaded by `<script type="module">` in
+ * `index.html` -- native browser ESM scope, not Node's module loader.
+ * `tsconfig.base.json`'s `module: 'NodeNext'` ties *emitted* format to
+ * the generated `package.json`'s `"type"` field (absent here, so
+ * `NodeNext` would emit CommonJS -- `exports`/`require` -- which throws
+ * `ReferenceError: exports is not defined` in that ES-module scope).
+ * Override `module`/`moduleResolution` here, for the renderer config
+ * only, so emission is real ESM (`export`/`import`) regardless of
+ * `package.json`'s `type` field: `'ES2022'` emits genuine ES modules,
+ * and `'bundler'` resolution matches (browser-target resolution that
+ * doesn't key off `package.json` `type` the way `NodeNext` does).
+ * `tsconfig.base.json`/`tsconfig.main.json` are untouched -- main and
+ * preload keep `NodeNext`/CJS-compatible resolution, which preload
+ * still needs for esbuild's CJS bundle under `sandbox: true`.
+ */
+const TSCONFIG_RENDERER = json({
+  extends: './tsconfig.base.json',
+  compilerOptions: {
+    lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+    types: [],
+    module: 'ES2022',
+    moduleResolution: 'bundler',
+    outDir: 'dist',
+    rootDir: 'src',
+  },
+  include: ['src/renderer/**/*.ts'],
+});
+
+/**
+ * `tsconfig.json` (or its per-process split) is also the build config, so
+ * its `include`/`rootDir` can't widen to cover `tests/**` and
+ * `vitest.config.ts` without tests landing in `dist/`. This sibling,
+ * noEmit-only config is what `npm run typecheck` actually runs against, so
+ * the generated project's own tests and vitest config are type-checked
+ * too — always present, in both branches (initial_scaffold.md "Revised
+ * plan for Open Decision 1").
+ *
+ * `includeSettings: false` extends the single shared `tsconfig.json`,
+ * unchanged from the project's original baseline. `includeSettings: true`
+ * does **not** extend either per-process config — merging two different
+ * `include` roots through `extends` adds more indirection than it saves
+ * for a dev-convenience file — and instead inlines the union of both
+ * processes' options directly, since this file's job (a single, broader,
+ * noEmit-only superset covering tests too) was never meant to mirror the
+ * build path's own per-process strictness.
  */
 const TSCONFIG_TYPECHECK = json({
   extends: './tsconfig.json',
   compilerOptions: { noEmit: true, rootDir: '.' },
   include: ['src/**/*.ts', 'tests/**/*.ts', 'vitest.config.ts'],
 });
+
+const TSCONFIG_TYPECHECK_SPLIT = json({
+  compilerOptions: {
+    target: 'ES2023',
+    lib: ['ES2023', 'DOM', 'DOM.Iterable'],
+    module: 'NodeNext',
+    moduleResolution: 'NodeNext',
+    noEmit: true,
+    rootDir: '.',
+    strict: true,
+    noUncheckedIndexedAccess: true,
+    types: ['node', 'electron'],
+    esModuleInterop: true,
+    forceConsistentCasingInFileNames: true,
+    skipLibCheck: true,
+  },
+  include: [
+    'src/main/**/*.ts',
+    'src/preload/**/*.ts',
+    'src/renderer/**/*.ts',
+    'tests/**/*.ts',
+    'vitest.config.ts',
+  ],
+});
+
+function renderTsconfigTypecheck(ctx: ResolvedContext): string {
+  return ctx.includeSettings ? TSCONFIG_TYPECHECK_SPLIT : TSCONFIG_TYPECHECK;
+}
 
 const VITEST_CONFIG = lines(
   "import { defineConfig } from 'vitest/config';",
@@ -757,58 +863,127 @@ function renderRendererIndexHtml(ctx: ResolvedContext): string {
     `      <h1>${appName}</h1>`,
     `      <p>${description}</p>`,
     '    </main>',
+    ...(ctx.includeSettings ? ['    <script type="module" src="./theme.js"></script>'] : []),
     '  </body>',
     '</html>',
   );
 }
 
-const RENDERER_CSS = lines(
-  'html, body {',
-  '  height: 100%;',
-  '  margin: 0;',
-  '  display: flex;',
-  '  align-items: center;',
-  '  justify-content: center;',
-  '  font-family: system-ui, sans-serif;',
-  '  text-align: center;',
-  '}',
-);
+/**
+ * Dark Mode wired to a real renderer consumer (functional_domain_tier2.md
+ * correction "Dark Mode wired end-to-end in the renderer", testing finding
+ * #9). Generated only when `ctx.includeSettings` is true — no new IPC
+ * channel, no new main/preload surface: `settings.get()` and
+ * `settings.onChange()` already exist on `BridgeApi`. Appearance state is
+ * pure CSS class state on the document root (§3.1), never inline-style
+ * mutation, and the script never reaches for `ipcRenderer` or `require`
+ * directly — it only ever calls through the narrow, already-validated
+ * bridge (§3.4).
+ */
+function renderRendererThemeTs(ctx: ResolvedContext): string {
+  return lines(
+    "import type { BridgeApi } from '../preload/api.js';",
+    '',
+    'declare global {',
+    '  interface Window {',
+    `    ${ctx.bridgeGlobal}: BridgeApi;`,
+    '  }',
+    '}',
+    '',
+    `const bridge = window.${ctx.bridgeGlobal};`,
+    '',
+    'function applyTheme(darkMode: boolean): void {',
+    "  document.documentElement.classList.toggle('theme-dark', darkMode);",
+    '}',
+    '',
+    'void bridge.settings.get().then((settings) => applyTheme(settings.darkMode));',
+    'bridge.settings.onChange((settings) => applyTheme(settings.darkMode));',
+  );
+}
+
+/**
+ * Conditional-composition idiom (same as elsewhere in this file): the
+ * dark-mode rule is appended, never replacing the base rule, only when
+ * `ctx.includeSettings` is true. Byte-identical to the original
+ * `RENDERER_CSS` constant when the flag is false (functional_domain_tier2.md
+ * correction §3.3). No curated palette beyond a minimal background/
+ * foreground swap (§3.2) — cosmetic placeholder content only.
+ */
+function renderRendererCss(ctx: ResolvedContext): string {
+  const base = lines(
+    'html, body {',
+    '  height: 100%;',
+    '  margin: 0;',
+    '  display: flex;',
+    '  align-items: center;',
+    '  justify-content: center;',
+    '  font-family: system-ui, sans-serif;',
+    '  text-align: center;',
+    '}',
+  );
+  if (!ctx.includeSettings) return base;
+  return base + lines(
+    '',
+    'html.theme-dark, body.theme-dark {',
+    '  background: #1e1e1e;',
+    '  color: #f0f0f0;',
+    '}',
+  );
+}
 
 /**
  * The explicit asset manifest the handoff asked for (§5.1) — generated
  * *output* a scaffolded project runs, not stackfold's own build (SOLID
  * Boundary Scan, Cycle B1 spec). `format: 'cjs'` is required, not a style
  * choice: `sandbox: true` loads the preload as CommonJS, never ESM.
+ *
+ * Constant -> function of `ctx` (Option B, per-process tsconfig split):
+ * with `includeSettings: false` this renders byte-identical to the
+ * original single-`tsc` baseline; with it true, `tsc -p tsconfig.json`
+ * is replaced by two independent passes (main+preload, then renderer —
+ * either order is fine, neither depends on the other's output). The
+ * esbuild preload-bundling step and the static-asset `ASSETS` copy list
+ * are unchanged either way.
  */
-const BUILD_SCRIPT = lines(
-  '#!/usr/bin/env node',
-  "import { execSync } from 'node:child_process';",
-  "import { cpSync, mkdirSync } from 'node:fs';",
-  "import { dirname } from 'node:path';",
-  "import { build as esbuildBuild } from 'esbuild';",
-  '',
-  "execSync('tsc -p tsconfig.json', { stdio: 'inherit' });",
-  '',
-  'await esbuildBuild({',
-  "  entryPoints: ['src/preload/index.ts'],",
-  "  outfile: 'dist/preload/index.js',",
-  '  bundle: true,',
-  "  platform: 'node',",
-  "  format: 'cjs', // required: sandbox: true loads the preload as CJS",
-  "  external: ['electron'],",
-  '});',
-  '',
-  '// Explicit asset manifest (handoff debt item #1) — add an entry here,',
-  '// never a bare `cp -r` in package.json, when renderer assets grow.',
-  'const ASSETS = [',
-  "  ['src/renderer/index.html', 'dist/renderer/index.html'],",
-  "  ['src/renderer/app.css', 'dist/renderer/app.css'],",
-  '];',
-  'for (const [from, to] of ASSETS) {',
-  '  mkdirSync(dirname(to), { recursive: true });',
-  '  cpSync(from, to);',
-  '}',
-);
+function renderBuildScript(ctx: ResolvedContext): string {
+  const tscCalls = ctx.includeSettings
+    ? [
+        "execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });",
+        '',
+        "execSync('tsc -p tsconfig.renderer.json', { stdio: 'inherit' });",
+      ]
+    : ["execSync('tsc -p tsconfig.json', { stdio: 'inherit' });"];
+
+  return lines(
+    '#!/usr/bin/env node',
+    "import { execSync } from 'node:child_process';",
+    "import { cpSync, mkdirSync } from 'node:fs';",
+    "import { dirname } from 'node:path';",
+    "import { build as esbuildBuild } from 'esbuild';",
+    '',
+    ...tscCalls,
+    '',
+    'await esbuildBuild({',
+    "  entryPoints: ['src/preload/index.ts'],",
+    "  outfile: 'dist/preload/index.js',",
+    '  bundle: true,',
+    "  platform: 'node',",
+    "  format: 'cjs', // required: sandbox: true loads the preload as CJS",
+    "  external: ['electron'],",
+    '});',
+    '',
+    '// Explicit asset manifest (handoff debt item #1) — add an entry here,',
+    '// never a bare `cp -r` in package.json, when renderer assets grow.',
+    'const ASSETS = [',
+    "  ['src/renderer/index.html', 'dist/renderer/index.html'],",
+    "  ['src/renderer/app.css', 'dist/renderer/app.css'],",
+    '];',
+    'for (const [from, to] of ASSETS) {',
+    '  mkdirSync(dirname(to), { recursive: true });',
+    '  cpSync(from, to);',
+    '}',
+  );
+}
 
 /**
  * `publish: null`, not `github`, deliberately (Cycle B1 spec): a freshly
@@ -1730,8 +1905,11 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'README.md', render: renderReadme },
   { path: '.gitignore', render: constant(GITIGNORE) },
   { path: 'LICENSE', include: hasAuthor, render: renderLicense },
-  { path: 'tsconfig.json', render: constant(TSCONFIG) },
-  { path: 'tsconfig.typecheck.json', render: constant(TSCONFIG_TYPECHECK) },
+  { path: 'tsconfig.json', include: (ctx) => !ctx.includeSettings, render: constant(TSCONFIG) },
+  { path: 'tsconfig.base.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_BASE) },
+  { path: 'tsconfig.main.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_MAIN) },
+  { path: 'tsconfig.renderer.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_RENDERER) },
+  { path: 'tsconfig.typecheck.json', render: renderTsconfigTypecheck },
   { path: 'vitest.config.ts', render: constant(VITEST_CONFIG) },
   { path: 'src/main/windowConfig.ts', render: renderWindowConfig },
   { path: 'src/main/linkPolicy.ts', render: constant(LINK_POLICY) },
@@ -1751,8 +1929,9 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'src/preload/api.ts', render: renderPreloadApi },
   { path: 'src/preload/index.ts', render: renderPreloadIndex },
   { path: 'src/renderer/index.html', render: renderRendererIndexHtml },
-  { path: 'src/renderer/app.css', render: constant(RENDERER_CSS) },
-  { path: 'scripts/build.mjs', render: constant(BUILD_SCRIPT) },
+  { path: 'src/renderer/app.css', render: renderRendererCss },
+  { path: 'src/renderer/theme.ts', include: (ctx) => ctx.includeSettings, render: renderRendererThemeTs },
+  { path: 'scripts/build.mjs', render: renderBuildScript },
   { path: 'electron-builder.yml', render: renderElectronBuilderYml },
   // Cycle B2 — e2e harness + CI (initial_scaffold.md), all unconditional.
   { path: 'playwright.config.ts', render: constant(PLAYWRIGHT_CONFIG) },
