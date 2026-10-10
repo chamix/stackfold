@@ -30,6 +30,7 @@ const TIER1_PATHS = [
   'src/main/windowConfig.ts',
   'src/main/linkPolicy.ts',
   'src/main/ipc.ts',
+  'src/main/menu.ts',
   'src/main/index.ts',
   'src/preload/api.ts',
   'src/preload/index.ts',
@@ -68,8 +69,15 @@ describe('electron-ts plugin — identity', () => {
 });
 
 describe('electron-ts plugin — questions()', () => {
-  it('declares appName, description and author, in that order', () => {
-    expect(plugin.questions().map((q) => q.id)).toEqual(['appName', 'description', 'author']);
+  it('declares appName, description, author and the three Tier-2 feature flags, in that order', () => {
+    expect(plugin.questions().map((q) => q.id)).toEqual([
+      'appName',
+      'description',
+      'author',
+      'includeSettings',
+      'includeSkins',
+      'includeAboutHelp',
+    ]);
   });
 
   it.each(['appName', 'description'])('declares %s as a text question with a string default', (id) => {
@@ -117,6 +125,9 @@ describe('electron-ts plugin — resolved context (tier 1: pure derivation)', ()
       bridgeGlobal: 'myCoolAppApi',
       ipcPrefix: 'my-cool-app',
       year: 2031,
+      includeSettings: false,
+      includeSkins: false,
+      includeAboutHelp: false,
     });
   });
 
