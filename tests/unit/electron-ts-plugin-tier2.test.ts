@@ -88,7 +88,9 @@ function expectedFileSet(flags: { includeSettings: boolean; includeSkins: boolea
     'README.md',
     '.gitignore',
     'LICENSE',
-    'tsconfig.json',
+    ...(includeSettings
+      ? ['tsconfig.base.json', 'tsconfig.main.json', 'tsconfig.renderer.json']
+      : ['tsconfig.json']),
     'tsconfig.typecheck.json',
     'vitest.config.ts',
     'src/main/windowConfig.ts',
@@ -107,6 +109,7 @@ function expectedFileSet(flags: { includeSettings: boolean; includeSkins: boolea
     'src/preload/index.ts',
     'src/renderer/index.html',
     'src/renderer/app.css',
+    ...(includeSettings ? ['src/renderer/theme.ts'] : []),
     'scripts/build.mjs',
     'electron-builder.yml',
     'playwright.config.ts',
@@ -265,6 +268,78 @@ describe('electron-ts plugin — content invariants across all 8 flag combinatio
     }
   });
 
+  it.each(ALL_COMBINATIONS)(
+    'renderer index.html has the theme <script> tag iff includeSettings, for %j',
+    (flags) => {
+      const answers = answersFor(flags);
+      const html = fileContent(answers, 'src/renderer/index.html');
+      if (flags.includeSettings) {
+        expect(html).toContain('<script type="module" src="./theme.js"></script>');
+      } else {
+        expect(html).not.toContain('<script');
+      }
+    }
+  );
+
+  it.each(ALL_COMBINATIONS)(
+    'renderer app.css has the .theme-dark rule iff includeSettings, for %j',
+    (flags) => {
+      const answers = answersFor(flags);
+      const css = fileContent(answers, 'src/renderer/app.css');
+      if (flags.includeSettings) {
+        expect(css).toContain('.theme-dark');
+      } else {
+        expect(css).not.toContain('theme-dark');
+      }
+    }
+  );
+
+  it.each(ALL_COMBINATIONS.filter((f) => f.includeSettings))(
+    'src/renderer/theme.ts consumes the bridge, never ipcRenderer/require directly, for %j (guardrail §3.4)',
+    (flags) => {
+      const answers = answersFor(flags);
+      const theme = fileContent(answers, 'src/renderer/theme.ts');
+      expect(theme).toContain('.settings.get()');
+      expect(theme).toContain('.settings.onChange(');
+      expect(theme).not.toContain('ipcRenderer');
+      expect(theme).not.toContain('require(');
+    }
+  );
+
+  it('tsconfig.renderer.json declares DOM lib and tsconfig.main.json does not, for an includeSettings: true combination', () => {
+    const answers = answersFor({ includeSettings: true, includeSkins: false, includeAboutHelp: false });
+    const rendererConfig = fileContent(answers, 'tsconfig.renderer.json');
+    const mainConfig = fileContent(answers, 'tsconfig.main.json');
+    expect(rendererConfig).toContain('DOM');
+    expect(mainConfig).not.toContain('DOM');
+  });
+
+  it.each(ALL_COMBINATIONS.filter((f) => f.includeSettings))(
+    'tsconfig.renderer.json overrides module/moduleResolution to emit real browser ESM, independent of package.json "type" (%j) (review_report.md §5 fix)',
+    (flags) => {
+      const answers = answersFor(flags);
+      const rendererConfig = JSON.parse(fileContent(answers, 'tsconfig.renderer.json'));
+      // `tsconfig.base.json` sets module/moduleResolution to NodeNext, which
+      // ties *emitted* format to package.json's "type" field (absent in the
+      // generated project) — that would emit CommonJS for a file loaded via
+      // `<script type="module">`, throwing `ReferenceError: exports is not
+      // defined in ES module scope` at real app launch. The renderer config
+      // must override both fields so emission is real ESM regardless of
+      // package.json's "type" field.
+      expect(rendererConfig.compilerOptions.module).toBe('ES2022');
+      expect(rendererConfig.compilerOptions.moduleResolution).toBe('bundler');
+
+      const mainConfig = JSON.parse(fileContent(answers, 'tsconfig.main.json'));
+      const baseConfig = JSON.parse(fileContent(answers, 'tsconfig.base.json'));
+      // main/preload must keep the inherited NodeNext pairing untouched —
+      // preload still needs esbuild's CJS bundle under sandbox: true.
+      expect(mainConfig.compilerOptions.module).toBeUndefined();
+      expect(mainConfig.compilerOptions.moduleResolution).toBeUndefined();
+      expect(baseConfig.compilerOptions.module).toBe('NodeNext');
+      expect(baseConfig.compilerOptions.moduleResolution).toBe('NodeNext');
+    }
+  );
+
   it('no branding leakage in any Tier-2 file, across all combinations (guardrail 3)', () => {
     for (const flags of ALL_COMBINATIONS) {
       for (const { content } of plugin.buildBlueprint(answersFor(flags)).files) {
@@ -406,7 +481,11 @@ describe('electron-ts plugin — Tier-2 generation integrity (real emitted code)
       await writeFile(
         config,
         JSON.stringify({
-          extends: posix(join(projectDir, 'tsconfig.json')),
+          // `tsconfig.typecheck.json` always exists (both the single-shared-
+          // config and per-process-split branches), unlike `tsconfig.json`
+          // which is only emitted when `includeSettings` is false — see
+          // initial_scaffold.md "Revised plan for Open Decision 1".
+          extends: posix(join(projectDir, 'tsconfig.typecheck.json')),
           compilerOptions: {
             noEmit: true,
             typeRoots: [posix(dirname(dirname(nodeTypesPkg))), posix(dirname(dirname(electronPkg)))],
