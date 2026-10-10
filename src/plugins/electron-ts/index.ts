@@ -53,6 +53,24 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
           type: 'input',
           default: DEFAULT_AUTHOR,
         },
+        {
+          id: 'includeSettings',
+          message: 'Include Settings (Dark Mode, Show Frontmatter, Show File Tree)?',
+          type: 'confirm',
+          default: false,
+        },
+        {
+          id: 'includeSkins',
+          message: 'Include Skins (user-editable visual presets)?',
+          type: 'confirm',
+          default: false,
+        },
+        {
+          id: 'includeAboutHelp',
+          message: 'Include About + Help windows?',
+          type: 'confirm',
+          default: false,
+        },
       ];
     },
 
