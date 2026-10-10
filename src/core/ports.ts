@@ -27,11 +27,23 @@ export class TargetNotEmptyError extends Error {
 export interface FileWriter {
   /**
    * Creates targetDir if it does not exist. Rejects with
-   * `TargetNotEmptyError` if targetDir exists and is non-empty
-   * (functional_domain §3.3); rejects with another error if targetDir
-   * exists but is not a directory.
+   * `TargetNotEmptyError` if targetDir exists and is non-empty; rejects
+   * with another error if targetDir exists but is not a directory — this
+   * second rejection is never bypassed, by either option below (see
+   * initial_scaffold.md, "ensureEmptyDir must tolerate known governance
+   * artifacts (testing finding #1)").
+   *
+   * `options.force`, when true, skips the non-empty check entirely (the
+   * "not a directory" rejection still applies). `options.ignoreEntries`
+   * names entries that don't count against emptiness when deciding
+   * whether targetDir is non-empty; it has no effect when `force` is
+   * true. Omitting `options` (or passing an empty `ignoreEntries`)
+   * preserves today's behavior exactly.
    */
-  ensureEmptyDir(targetDir: string): Promise<void>;
+  ensureEmptyDir(
+    targetDir: string,
+    options?: { force?: boolean; ignoreEntries?: readonly string[] }
+  ): Promise<void>;
   writeFile(absolutePath: string, content: string | Buffer): Promise<void>;
 }
 

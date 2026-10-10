@@ -125,7 +125,8 @@ export class PostActionError extends Error {
 export async function runPlugin(
   plugin: StackfoldPlugin,
   targetDir: string,
-  ports: OrchestratorPorts
+  ports: OrchestratorPorts,
+  options?: { force?: boolean; ignoreEntries?: readonly string[] }
 ): Promise<ScaffoldResult> {
   const questions = plugin.questions();
   assertValidQuestions(plugin.id, questions);
@@ -136,7 +137,7 @@ export async function runPlugin(
   const blueprint = plugin.buildBlueprint(answers);
   const plannedFiles = planFiles(plugin.id, targetDir, blueprint);
 
-  await ports.fileWriter.ensureEmptyDir(targetDir);
+  await ports.fileWriter.ensureEmptyDir(targetDir, options);
 
   const filesWritten = await writeFiles(targetDir, plannedFiles, ports.fileWriter);
   const postActionsRun = await runPostActions(

@@ -24,7 +24,7 @@ type Call =
   | { step: 'questions' }
   | { step: 'ask'; questions: QuestionDefinition[] }
   | { step: 'buildBlueprint'; answers: Answers }
-  | { step: 'ensureEmptyDir'; targetDir: string }
+  | { step: 'ensureEmptyDir'; targetDir: string; options?: { force?: boolean; ignoreEntries?: readonly string[] } }
   | { step: 'writeFile'; path: string; content: string | Buffer }
   | { step: 'run'; command: string; args: string[]; cwd: string | undefined };
 
@@ -72,8 +72,8 @@ function harness(opts: {
   };
 
   const fileWriter: FileWriter = {
-    async ensureEmptyDir(targetDir) {
-      calls.push({ step: 'ensureEmptyDir', targetDir });
+    async ensureEmptyDir(targetDir, options) {
+      calls.push({ step: 'ensureEmptyDir', targetDir, options });
       if (opts.ensureEmptyDirError) throw opts.ensureEmptyDirError;
     },
     async writeFile(path, content) {
@@ -345,6 +345,23 @@ describe('runPlugin — §3.3 no pre-existing project is touched', () => {
     await expect(runPlugin(h.plugin, TARGET, h.ports)).rejects.toThrow('target is not empty');
     expect(steps(h.calls)).not.toContain('writeFile');
     expect(steps(h.calls)).not.toContain('run');
+  });
+
+  it('forwards the optional force/ignoreEntries options verbatim to ensureEmptyDir (testing finding #1)', async () => {
+    const h = harness();
+    const options = { force: true, ignoreEntries: ['.git', '.agents'] };
+
+    await runPlugin(h.plugin, TARGET, h.ports, options);
+
+    expect(h.calls).toContainEqual({ step: 'ensureEmptyDir', targetDir: TARGET, options });
+  });
+
+  it('omits options from the ensureEmptyDir call when runPlugin is called without a 4th argument', async () => {
+    const h = harness();
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(h.calls).toContainEqual({ step: 'ensureEmptyDir', targetDir: TARGET, options: undefined });
   });
 });
 
