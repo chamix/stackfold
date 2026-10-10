@@ -263,6 +263,42 @@ describe('electron-ts plugin — content invariants across all 8 flag combinatio
   });
 });
 
+describe('electron-ts plugin — main/index.ts wires the trust registry at window create/close (S4)', () => {
+  it.each(ALL_COMBINATIONS)('trustWebContents/untrustWebContents call-site wiring for %j', (flags) => {
+    const answers = answersFor(flags);
+    const src = fileContent(answers, 'src/main/index.ts');
+    const needsTrustedSenderRegistry = flags.includeSettings || flags.includeSkins;
+
+    if (needsTrustedSenderRegistry) {
+      expect(src).toContain("import { trustWebContents, untrustWebContents } from './ipc.js';");
+      // Must capture webContents.id, not BaseWindow's own id — isTrustedSender
+      // compares event.sender.id (a WebContents id) against this registry.
+      expect(src).toContain('const windowId = window.webContents.id;');
+
+      const newWindowIndex = src.indexOf('new BrowserWindow');
+      const trustIndex = src.indexOf('trustWebContents(windowId);');
+      const closedIndex = src.indexOf("window.on('closed'");
+      const untrustIndex = src.indexOf('untrustWebContents(windowId);');
+
+      expect(newWindowIndex).toBeGreaterThan(-1);
+      expect(trustIndex).toBeGreaterThan(newWindowIndex);
+      expect(closedIndex).toBeGreaterThan(trustIndex);
+      expect(untrustIndex).toBeGreaterThan(closedIndex);
+
+      // untrustWebContents must live inside the 'closed' handler body, not
+      // merely somewhere later in the file: it must precede that handler's
+      // own closing `});`.
+      const closedHandlerEnd = src.indexOf('});', closedIndex);
+      expect(closedHandlerEnd).toBeGreaterThan(-1);
+      expect(untrustIndex).toBeLessThan(closedHandlerEnd);
+    } else {
+      expect(src).not.toContain('trustWebContents');
+      expect(src).not.toContain('untrustWebContents');
+      expect(src).not.toContain("'./ipc.js'");
+    }
+  });
+});
+
 describe('electron-ts plugin — About window omits Author row with no author (guardrail 4)', () => {
   it('aboutWindow.ts reuses the same optional-author pattern as LICENSE/hasAuthor', () => {
     const src = fileContent({ ...BASE_ANSWERS, author: '', includeAboutHelp: true }, 'src/main/aboutWindow.ts');
