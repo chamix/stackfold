@@ -402,6 +402,11 @@ describe('electron-ts plugin — static-window CSP (About/Help)', () => {
     expect(src).toContain('<style>${STYLE_CSS}</style>');
   });
 
+  it.each(['src/main/aboutWindow.ts', 'src/main/helpWindow.ts'])('%s calls window.setMenu(null) so it does not inherit the main app menu', (path) => {
+    const src = fileContent({ ...BASE_ANSWERS, includeAboutHelp: true }, path);
+    expect(src).toContain('window.setMenu(null)');
+  });
+
   it('staticWindowShell.ts pins style-src to a SHA-256 hash and sets script-src/base-uri/form-action to none', () => {
     const src = fileContent({ ...BASE_ANSWERS, includeAboutHelp: true }, 'src/main/staticWindowShell.ts');
     expect(src).toContain("createHash('sha256')");
@@ -419,6 +424,10 @@ describe('electron-ts plugin — static-window CSP (About/Help)', () => {
     expect(fn).toContain('contextIsolation: true');
     expect(fn).toContain('nodeIntegration: false');
     expect(fn).toContain('sandbox: true');
+    expect(fn).toContain('resizable: false');
+    expect(fn).toContain('minimizable: false');
+    expect(fn).toContain('maximizable: false');
+    expect(fn).toContain('fullscreenable: false');
   });
 
   it('windowConfig.ts omits staticWindowOptions() entirely when includeAboutHelp is false', () => {
