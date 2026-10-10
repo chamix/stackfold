@@ -1,19 +1,28 @@
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { registerInitCommand, runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
 import { formatPostAction } from '../../src/core/orchestrator.js';
 import { TargetNotEmptyError, type PluginRegistry } from '../../src/core/ports.js';
-import type { PostActionDefinition, ProjectBlueprint, StackfoldPlugin } from '../../src/core/types.js';
+import type { Answers, PostActionDefinition, ProjectBlueprint, QuestionDefinition, StackfoldPlugin } from '../../src/core/types.js';
 
 const CWD = resolve('/base/dir');
 
-function fakePlugin(id: string, blueprint: ProjectBlueprint): StackfoldPlugin {
+function fakePlugin(
+  id: string,
+  blueprint: ProjectBlueprint,
+  opts: { questions?: QuestionDefinition[]; onBuildBlueprint?: (answers: Answers) => void } = {}
+): StackfoldPlugin {
   return {
     id,
     description: `${id} description`,
-    questions: () => [],
-    buildBlueprint: () => blueprint,
+    questions: () => opts.questions ?? [],
+    buildBlueprint: (answers) => {
+      opts.onBuildBlueprint?.(answers);
+      return blueprint;
+    },
   };
 }
 
@@ -33,6 +42,12 @@ function setup(opts: {
   failRunOn?: string;
   /** Pretend pre-existing entries in the target dir, for exercising ensureEmptyDir's allowlist/force logic. */
   pretendEntries?: string[];
+  /** Questions the "fake" plugin declares (testing finding #2 — non-interactive answer resolution needs real declared questions, since resolveAnswers() drops undeclared keys). */
+  questions?: QuestionDefinition[];
+  /** Captures the Answers object the "fake" plugin's buildBlueprint() actually received. */
+  onBuildBlueprint?: (answers: Answers) => void;
+  /** Overrides the default fake ask() implementation (default returns {}). */
+  ask?: () => Promise<Answers>;
 } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -40,8 +55,12 @@ function setup(opts: {
   const ensuredOptions: Array<{ force?: boolean; ignoreEntries?: readonly string[] } | undefined> = [];
   const writes: string[] = [];
   const runs: string[] = [];
+  const askCalls: number[] = [];
 
-  const plugins = [fakePlugin('fake', opts.blueprint ?? DEFAULT_BLUEPRINT), fakePlugin('other', DEFAULT_BLUEPRINT)];
+  const plugins = [
+    fakePlugin('fake', opts.blueprint ?? DEFAULT_BLUEPRINT, { questions: opts.questions, onBuildBlueprint: opts.onBuildBlueprint }),
+    fakePlugin('other', DEFAULT_BLUEPRINT),
+  ];
   const registry: PluginRegistry = {
     resolve: (id) => plugins.find((p) => p.id === id),
     list: () => [...plugins],
@@ -52,7 +71,9 @@ function setup(opts: {
     ports: {
       prompter: {
         ask: async () => {
+          askCalls.push(1);
           if (opts.askError) throw opts.askError;
+          if (opts.ask) return opts.ask();
           return {};
         },
       },
@@ -84,7 +105,7 @@ function setup(opts: {
     stderr: (line) => stderr.push(line),
   };
 
-  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs };
+  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs, askCalls };
 }
 
 /** Lines following `title` in the output, up to the next non-indented line. */
@@ -287,5 +308,95 @@ describe('runInit / registerInitCommand — --force and the governance allowlist
     expect(s.stderr.join('\n')).toContain('already exists and is not empty');
 
     process.exitCode = undefined;
+  });
+});
+
+describe('runInit — non-interactive answers via --config / --answer (testing finding #2)', () => {
+  const QUESTIONS: QuestionDefinition[] = [
+    { id: 'appName', message: 'App name?', type: 'input' },
+    { id: 'includeSettings', message: 'Include settings?', type: 'confirm' },
+  ];
+
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'stackfold-init-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a config-file-only run resolves answers from a real temp JSON file and buildBlueprint() receives them', async () => {
+    const configPath = join(tmpDir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ appName: 'My Cool App', includeSettings: true }));
+
+    let received: Answers | undefined;
+    const s = setup({ questions: QUESTIONS, onBuildBlueprint: (answers) => (received = answers) });
+
+    expect(await runInit('fake', 'my-app', s.deps, { config: configPath })).toBe(0);
+
+    expect(received).toEqual({ appName: 'My Cool App', includeSettings: true });
+    expect(s.askCalls).toEqual([]);
+  });
+
+  it('--answer alone (no --config) works', async () => {
+    let received: Answers | undefined;
+    const s = setup({ questions: QUESTIONS, onBuildBlueprint: (answers) => (received = answers) });
+
+    expect(
+      await runInit('fake', 'my-app', s.deps, { answer: ['appName=CLI App', 'includeSettings=false'] })
+    ).toBe(0);
+
+    expect(received).toEqual({ appName: 'CLI App', includeSettings: false });
+    expect(s.askCalls).toEqual([]);
+  });
+
+  it('--config + --answer together: --answer wins on a shared key', async () => {
+    const configPath = join(tmpDir, 'config.json');
+    await writeFile(configPath, JSON.stringify({ appName: 'From Config', includeSettings: false }));
+
+    let received: Answers | undefined;
+    const s = setup({ questions: QUESTIONS, onBuildBlueprint: (answers) => (received = answers) });
+
+    expect(
+      await runInit('fake', 'my-app', s.deps, { config: configPath, answer: ['includeSettings=true'] })
+    ).toBe(0);
+
+    expect(received).toEqual({ appName: 'From Config', includeSettings: true });
+  });
+
+  it('a malformed --answer (no "=") fails cleanly before any file-system work', async () => {
+    const s = setup({ questions: QUESTIONS });
+
+    expect(await runInit('fake', 'my-app', s.deps, { answer: ['noequalsign'] })).toBe(1);
+
+    expect(s.stderr.join('\n')).toContain('--answer must be in the form key=value, got "noequalsign"');
+    expect(s.ensuredDirs).toEqual([]);
+    expect(s.writes).toEqual([]);
+  });
+
+  it('--config pointing at a nonexistent file fails cleanly', async () => {
+    const missing = join(tmpDir, 'does-not-exist.json');
+    const s = setup({ questions: QUESTIONS });
+
+    expect(await runInit('fake', 'my-app', s.deps, { config: missing })).toBe(1);
+
+    expect(s.stderr[0]).toMatch(/^stackfold init: /);
+    expect(s.ensuredDirs).toEqual([]);
+  });
+
+  it('neither flag given still goes through the existing injected Prompter, unchanged (regression guard)', async () => {
+    let received: Answers | undefined;
+    const s = setup({
+      questions: QUESTIONS,
+      onBuildBlueprint: (answers) => (received = answers),
+      ask: async () => ({ appName: 'From Interactive Prompt', includeSettings: true }),
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps, {})).toBe(0);
+
+    expect(s.askCalls).toEqual([1]);
+    expect(received).toEqual({ appName: 'From Interactive Prompt', includeSettings: true });
   });
 });

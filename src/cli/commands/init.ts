@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { cosmiconfig } from 'cosmiconfig';
 import type { Command } from 'commander';
 import {
   PostActionError,
@@ -8,6 +9,8 @@ import {
   type OrchestratorPorts,
 } from '../../core/orchestrator.js';
 import type { PluginRegistry } from '../../core/ports.js';
+import type { Answers, AnswerValue } from '../../core/types.js';
+import { StaticPrompter } from '../../infra/prompter.js';
 
 /**
  * The `claude-blueprints` governance workflow drops these into a target
@@ -40,9 +43,26 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
     .argument('[stack]', 'Plugin/stack to use, e.g. "electron-ts"')
     .argument('[directory]', 'Target directory (must be empty or not exist yet)')
     .option('--force', 'scaffold into a non-empty directory anyway (existing files are still never overwritten)', false)
-    .action(async (stack?: string, directory?: string, options?: { force?: boolean }) => {
-      process.exitCode = await runInit(stack, directory, deps, { force: options?.force ?? false });
-    });
+    .option('--config <path>', 'load non-interactive answers from a config file (json/yaml/js via cosmiconfig)')
+    .option(
+      '--answer <keyValue>',
+      'set one answer directly, repeatable: key=value ("true"/"false" become booleans, everything else stays a string)',
+      (value: string, prev: string[]) => [...prev, value],
+      [] as string[]
+    )
+    .action(
+      async (
+        stack?: string,
+        directory?: string,
+        options?: { force?: boolean; config?: string; answer?: string[] }
+      ) => {
+        process.exitCode = await runInit(stack, directory, deps, {
+          force: options?.force ?? false,
+          config: options?.config,
+          answer: options?.answer ?? [],
+        });
+      }
+    );
 }
 
 /** Returns the process exit code; never throws. */
@@ -50,7 +70,7 @@ export async function runInit(
   stack: string | undefined,
   directory: string | undefined,
   deps: InitCommandDependencies,
-  options?: { force?: boolean }
+  options?: { force?: boolean; config?: string; answer?: string[] }
 ): Promise<number> {
   const { registry, stdout, stderr } = deps;
 
@@ -75,7 +95,17 @@ export async function runInit(
   const targetDir = resolve(deps.cwd(), directory);
 
   try {
-    const result = await runPlugin(plugin, targetDir, deps.ports, {
+    const nonInteractiveAnswers = await resolveNonInteractiveAnswers(
+      options?.config,
+      options?.answer ?? [],
+      deps.cwd()
+    );
+    const ports =
+      nonInteractiveAnswers === undefined
+        ? deps.ports
+        : { ...deps.ports, prompter: new StaticPrompter(nonInteractiveAnswers) };
+
+    const result = await runPlugin(plugin, targetDir, ports, {
       force: options?.force ?? false,
       ignoreEntries: GOVERNANCE_ENTRIES,
     });
@@ -85,6 +115,54 @@ export async function runInit(
     reportFailure(err, stderr);
     return isPromptAbort(err) ? 130 : 1;
   }
+}
+
+/**
+ * Testing finding #2 — non-interactive `init` via config file + `--answer`
+ * flags. Returns `undefined` when neither is given, meaning "stay
+ * interactive" (today's `InquirerPrompter` behavior is unchanged); the
+ * caller never even touches `cosmiconfig` in that case.
+ *
+ * Does no filtering/validation of its own — `resolveAnswers()` in the
+ * orchestrator already drops undeclared keys, type-checks, and applies
+ * each question's own `validate()`. This just produces the raw, possibly-
+ * partial `Answers` map `StaticPrompter` will hand back verbatim.
+ */
+export async function resolveNonInteractiveAnswers(
+  configPath: string | undefined,
+  answerFlags: string[],
+  cwd: string
+): Promise<Answers | undefined> {
+  if (configPath === undefined && answerFlags.length === 0) return undefined;
+
+  let configAnswers: Answers = {};
+  if (configPath !== undefined) {
+    const result = await cosmiconfig('stackfold').load(resolve(cwd, configPath));
+    const config = result?.config;
+    if (result === null || typeof config !== 'object' || config === null || Array.isArray(config)) {
+      throw new Error(`stackfold init: config file "${configPath}" must contain an object of answers.`);
+    }
+    configAnswers = config as Answers;
+  }
+
+  const overrideAnswers: Answers = {};
+  for (const entry of answerFlags) {
+    const separatorIndex = entry.indexOf('=');
+    if (separatorIndex === -1) {
+      throw new Error(`stackfold init: --answer must be in the form key=value, got "${entry}".`);
+    }
+    const key = entry.slice(0, separatorIndex);
+    const rawValue = entry.slice(separatorIndex + 1);
+    overrideAnswers[key] = coerceAnswerValue(rawValue);
+  }
+
+  return { ...configAnswers, ...overrideAnswers };
+}
+
+function coerceAnswerValue(raw: string): AnswerValue {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return raw;
 }
 
 function printAvailable(registry: PluginRegistry, write: (line: string) => void): void {

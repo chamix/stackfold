@@ -56,6 +56,16 @@ npm test                          # vitest
 npm run typecheck                 # tsc --noEmit
 ```
 
+`init` also runs non-interactively via `--config <path>` (answers loaded
+from a json/yaml/js file through cosmiconfig) and/or repeatable
+`--answer key=value` flags (`--answer` wins over `--config` on a shared
+key; neither flag given keeps the normal interactive prompts):
+
+```bash
+stackfold init electron-ts ./out --config config.json
+stackfold init electron-ts ./out --answer appName="CI Smoke Test" --answer includeSettings=false
+```
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

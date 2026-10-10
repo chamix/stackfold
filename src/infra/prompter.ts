@@ -46,3 +46,19 @@ async function askOne(q: QuestionDefinition): Promise<AnswerValue> {
     }
   }
 }
+
+/**
+ * Non-interactive adapter (testing finding #2) — hands back a fixed
+ * `Answers` map instead of asking a terminal. Deliberately dumb: it does
+ * no filtering or validation of its own. `resolveAnswers()` in the
+ * orchestrator already drops any key a plugin didn't declare a question
+ * for and validates every declared one, so this class stays
+ * answer-source-agnostic and ignores `questions` entirely.
+ */
+export class StaticPrompter implements Prompter {
+  constructor(private readonly answers: Answers) {}
+
+  async ask(_questions: QuestionDefinition[]): Promise<Answers> {
+    return { ...this.answers };
+  }
+}
