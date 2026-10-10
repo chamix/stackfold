@@ -37,7 +37,7 @@ export interface ResolvedContext {
   ipcPrefix: string;
   /** Copyright year for LICENSE — injected, never read from a clock here. */
   year: number;
-  /** Settings feature selected (Dark Mode + Show Frontmatter + Show File Tree). */
+  /** Settings feature selected (Dark Mode). */
   includeSettings: boolean;
   /** Skins feature selected (named, user-editable visual presets). */
   includeSkins: boolean;
@@ -905,14 +905,12 @@ const STATIC_WINDOW_SHELL = lines(
   '}'
 );
 
-/** Settings feature (`ctx.includeSettings`) — Dark Mode + Show Frontmatter + Show File Tree (Decision 1: folded into Settings, no separate theme question). */
+/** Settings feature (`ctx.includeSettings`) — Dark Mode (Decision 1: folded into Settings, no separate theme question). */
 const SETTINGS_TS = lines(
   "import { z } from 'zod';",
   '',
   'export const ViewSettingsSchema = z',
   '  .object({',
-  '    showFrontmatter: z.boolean(),',
-  '    showFileTree: z.boolean(),',
   '    darkMode: z.boolean(),',
   '  })',
   '  .strict();',
@@ -920,8 +918,6 @@ const SETTINGS_TS = lines(
   'export type ViewSettings = z.infer<typeof ViewSettingsSchema>;',
   '',
   'export const DEFAULT_VIEW_SETTINGS: ViewSettings = {',
-  '  showFrontmatter: true,',
-  '  showFileTree: true,',
   '  darkMode: false,',
   '};'
 );
@@ -1363,22 +1359,6 @@ function renderMenuTs(ctx: ResolvedContext): string {
     if (ctx.includeSettings) {
       body.push(
         '  viewItems.push(',
-        '    {',
-        "      label: 'Show Frontmatter',",
-        "      type: 'checkbox',",
-        '      checked: getSettings().showFrontmatter,',
-        '      click: () => {',
-        '        void setSettings({ showFrontmatter: !getSettings().showFrontmatter });',
-        '      },',
-        '    },',
-        '    {',
-        "      label: 'Show File Tree',",
-        "      type: 'checkbox',",
-        '      checked: getSettings().showFileTree,',
-        '      click: () => {',
-        '        void setSettings({ showFileTree: !getSettings().showFileTree });',
-        '      },',
-        '    },',
         '    {',
         "      label: 'Dark Mode',",
         "      type: 'checkbox',",

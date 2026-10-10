@@ -55,7 +55,7 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
         },
         {
           id: 'includeSettings',
-          message: 'Include Settings (Dark Mode, Show Frontmatter, Show File Tree)?',
+          message: 'Include Settings (Dark Mode)?',
           type: 'confirm',
           default: false,
         },
