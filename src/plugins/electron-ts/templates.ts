@@ -183,6 +183,18 @@ function renderPackageJson(ctx: ResolvedContext): string {
       'electron-builder': '^26.15.3',
       '@playwright/test': '^1.64.0',
     },
+    // Forces electron-builder's own `@electron/get@^3.0.0` dependency (and
+    // its transitive `glob`/`rimraf`) off versions with a real npm-audit
+    // finding (sprintf-js DoS via @electron/get@3 -> got@11 -> global-agent
+    // -> roarr -> sprintf-js) or deprecation warnings (glob@7/rimraf@2/
+    // inflight/boolean). Verified empirically (finding #4, 2026-10-10): a
+    // real generated project installs clean and `npm run package` builds
+    // with all three at their newest non-deprecated major.
+    overrides: {
+      '@electron/get': '^5.1.0',
+      glob: '^13.0.6',
+      rimraf: '^6.1.3',
+    },
   });
 }
 
@@ -233,6 +245,23 @@ function renderReadme(ctx: ResolvedContext): string {
     '2. `release.yml`: change `--publish never` to `--publish always`.',
     '3. `release.yml`: change `permissions: contents: read` to',
     '   `contents: write`.',
+    '',
+    '`npm install` also needs real network access to **github.com releases**,',
+    'not just the npm registry, to download the Electron and Chromium',
+    'binaries (the `electron` devDependency\'s own postinstall). If that path',
+    'is blocked while the registry itself is reachable, `npm install` can',
+    'still "succeed" with the binary missing, and the first `npm run test:e2e`',
+    'run will then attempt the download itself instead of failing cleanly at',
+    'install time. Behind a corporate HTTP(S) proxy, set',
+    '`ELECTRON_GET_USE_PROXY=true` (with `HTTPS_PROXY`/`HTTP_PROXY` already',
+    'set) before `npm install` / `npm run package`, so the binary download',
+    'picks up your proxy instead of failing outright.',
+    '',
+    'Relatedly, `esbuild`, `electron-builder` and `electron-winstaller` each',
+    'run their own `postinstall` install script to fetch native binaries',
+    '(esbuild\'s own binary; electron-builder/electron-winstaller\'s packaging',
+    'helpers). That is expected behavior, not a sign of a compromised',
+    'install, and nothing in this project needs `--ignore-scripts`.',
   );
 }
 

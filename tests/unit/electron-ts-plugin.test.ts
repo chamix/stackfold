@@ -250,6 +250,15 @@ describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', 
     });
   });
 
+  it('package.json forces @electron/get, glob and rimraf off their vulnerable/deprecated versions (finding #4)', () => {
+    const pkg = JSON.parse(fileContent(ANSWERS, 'package.json'));
+    expect(pkg.overrides).toEqual({
+      '@electron/get': '^5.1.0',
+      glob: '^13.0.6',
+      rimraf: '^6.1.3',
+    });
+  });
+
   it('package.json omits author/license when no author is given', () => {
     const pkg = JSON.parse(fileContent(NO_AUTHOR, 'package.json'));
     expect(pkg).not.toHaveProperty('author');
@@ -273,6 +282,20 @@ describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', 
     expect(readme).toContain('window.myCoolAppApi');
     expect(readme.toLowerCase()).not.toContain('placeholder');
     expect(readme.toLowerCase()).not.toContain('pending');
+  });
+
+  it('README documents that the Electron binary download needs GitHub Releases network access, not just the npm registry (finding #3)', () => {
+    const readme = fileContent(ANSWERS, 'README.md');
+    expect(readme).toMatch(/github(\.com)?\s*releases/i);
+    expect(readme.toLowerCase()).toContain('npm install');
+    expect(readme).toMatch(/test:e2e/);
+  });
+
+  it('README documents that esbuild/electron-builder/electron-winstaller postinstall scripts are expected, not a compromise sign (finding #5)', () => {
+    const readme = fileContent(ANSWERS, 'README.md');
+    expect(readme).toMatch(/postinstall|install script/i);
+    expect(readme.toLowerCase()).toContain('esbuild');
+    expect(readme.toLowerCase()).toContain('electron-builder');
   });
 
   it('.gitignore covers dependencies, build output and caches', () => {
