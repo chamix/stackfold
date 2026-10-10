@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
+import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
-import { runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
+import { registerInitCommand, runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
 import { formatPostAction } from '../../src/core/orchestrator.js';
 import { TargetNotEmptyError, type PluginRegistry } from '../../src/core/ports.js';
 import type { PostActionDefinition, ProjectBlueprint, StackfoldPlugin } from '../../src/core/types.js';
@@ -30,10 +31,13 @@ function setup(opts: {
   ensureEmptyDirError?: Error;
   failWriteOn?: string;
   failRunOn?: string;
+  /** Pretend pre-existing entries in the target dir, for exercising ensureEmptyDir's allowlist/force logic. */
+  pretendEntries?: string[];
 } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const ensuredDirs: string[] = [];
+  const ensuredOptions: Array<{ force?: boolean; ignoreEntries?: readonly string[] } | undefined> = [];
   const writes: string[] = [];
   const runs: string[] = [];
 
@@ -53,9 +57,15 @@ function setup(opts: {
         },
       },
       fileWriter: {
-        ensureEmptyDir: async (dir) => {
+        ensureEmptyDir: async (dir, options) => {
           ensuredDirs.push(dir);
+          ensuredOptions.push(options);
           if (opts.ensureEmptyDirError) throw opts.ensureEmptyDirError;
+
+          const remaining = options?.force
+            ? []
+            : (opts.pretendEntries ?? []).filter((e) => !(options?.ignoreEntries ?? []).includes(e));
+          if (remaining.length > 0) throw new TargetNotEmptyError(dir);
         },
         writeFile: async (path) => {
           if (opts.failWriteOn && path.endsWith(opts.failWriteOn)) throw new Error('disk full');
@@ -74,7 +84,7 @@ function setup(opts: {
     stderr: (line) => stderr.push(line),
   };
 
-  return { deps, stdout, stderr, ensuredDirs, writes, runs };
+  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs };
 }
 
 /** Lines following `title` in the output, up to the next non-indented line. */
@@ -224,5 +234,58 @@ describe('runInit — failures', () => {
     await runInit('fake', 'my-app', s.deps);
 
     expect(section(s.stderr, 'Not run')).toEqual(actions.map(formatPostAction));
+  });
+});
+
+describe('runInit / registerInitCommand — --force and the governance allowlist (testing finding #1)', () => {
+  function buildProgram(deps: InitCommandDependencies): Command {
+    const program = new Command();
+    program.exitOverride();
+    registerInitCommand(program, deps);
+    return program;
+  }
+
+  it('stackfold init <stack> <dir> --force succeeds into a non-empty directory, via the CLI command', async () => {
+    const s = setup({ pretendEntries: ['leftover.txt'] });
+    const program = buildProgram(s.deps);
+    process.exitCode = undefined;
+
+    await program.parseAsync(['init', 'fake', 'my-app', '--force'], { from: 'user' });
+
+    expect(process.exitCode).toBe(0);
+    expect(s.stderr).toEqual([]);
+    expect(s.ensuredOptions).toHaveLength(1);
+    expect(s.ensuredOptions[0]?.force).toBe(true);
+    expect(s.ensuredOptions[0]?.ignoreEntries).toEqual(expect.arrayContaining(['.git', '.agents', '.claude', 'CLAUDE.md']));
+
+    process.exitCode = undefined;
+  });
+
+  it('a directory containing only the default governance entries succeeds without --force', async () => {
+    const s = setup({ pretendEntries: ['.agents', 'CLAUDE.md'] });
+    const program = buildProgram(s.deps);
+    process.exitCode = undefined;
+
+    await program.parseAsync(['init', 'fake', 'my-app'], { from: 'user' });
+
+    expect(process.exitCode).toBe(0);
+    expect(s.stderr).toEqual([]);
+    expect(s.ensuredOptions[0]?.force).toBe(false);
+    expect(s.ensuredOptions[0]?.ignoreEntries).toEqual(expect.arrayContaining(['.agents', 'CLAUDE.md']));
+
+    process.exitCode = undefined;
+  });
+
+  it('rejects a non-empty directory with a real conflicting file, --force omitted, same as today', async () => {
+    const s = setup({ pretendEntries: ['real-conflict.txt'] });
+    const program = buildProgram(s.deps);
+    process.exitCode = undefined;
+
+    await program.parseAsync(['init', 'fake', 'my-app'], { from: 'user' });
+
+    expect(process.exitCode).toBe(1);
+    expect(s.stderr.join('\n')).toContain('already exists and is not empty');
+
+    process.exitCode = undefined;
   });
 });

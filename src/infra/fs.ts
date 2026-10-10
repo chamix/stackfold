@@ -10,9 +10,19 @@ export class NodeFileWriter implements FileWriter {
   /**
    * Creates targetDir if it doesn't exist; rejects with TargetNotEmptyError
    * if it exists and is non-empty, or with a plain Error if it exists but
-   * is not a directory (functional_domain §3.3).
+   * is not a directory (functional_domain §3.3; `options.force` never
+   * bypasses this second rejection — see testing finding #1 in
+   * initial_scaffold.md).
+   *
+   * `options.force` skips the non-empty check entirely. Otherwise,
+   * `options.ignoreEntries` is filtered out of the directory listing
+   * before deciding emptiness. No options (or an empty `ignoreEntries`)
+   * is identical to today's behavior.
    */
-  async ensureEmptyDir(targetDir: string): Promise<void> {
+  async ensureEmptyDir(
+    targetDir: string,
+    options?: { force?: boolean; ignoreEntries?: readonly string[] }
+  ): Promise<void> {
     const dir = resolve(targetDir);
 
     let isDirectory: boolean;
@@ -29,7 +39,14 @@ export class NodeFileWriter implements FileWriter {
     if (!isDirectory) {
       throw new Error(`Target path ${dir} already exists and is not a directory.`);
     }
-    if ((await readdir(dir)).length > 0) {
+    if (options?.force) {
+      return;
+    }
+
+    const entries = await readdir(dir);
+    const ignored = new Set(options?.ignoreEntries ?? []);
+    const remaining = ignored.size > 0 ? entries.filter((entry) => !ignored.has(entry)) : entries;
+    if (remaining.length > 0) {
       throw new TargetNotEmptyError(dir);
     }
   }

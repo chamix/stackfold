@@ -9,6 +9,16 @@ import {
 } from '../../core/orchestrator.js';
 import type { PluginRegistry } from '../../core/ports.js';
 
+/**
+ * The `claude-blueprints` governance workflow drops these into a target
+ * directory before `stackfold init` ever runs (see testing finding #1 in
+ * initial_scaffold.md). This allowlist is a composition-root concern: core/
+ * (`ports.ts`, `fs.ts`, `orchestrator.ts`) stays generic and never learns
+ * what "governance" means — it only ever sees `ignoreEntries`. Not
+ * user-configurable; no second case exists yet (regla de tres).
+ */
+const GOVERNANCE_ENTRIES = ['.git', '.agents', '.claude', 'CLAUDE.md'] as const;
+
 export interface InitCommandDependencies {
   registry: PluginRegistry;
   ports: OrchestratorPorts;
@@ -29,8 +39,9 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
     .description('Scaffold a new project from a stackfold plugin')
     .argument('[stack]', 'Plugin/stack to use, e.g. "electron-ts"')
     .argument('[directory]', 'Target directory (must be empty or not exist yet)')
-    .action(async (stack?: string, directory?: string) => {
-      process.exitCode = await runInit(stack, directory, deps);
+    .option('--force', 'scaffold into a non-empty directory anyway (existing files are still never overwritten)', false)
+    .action(async (stack?: string, directory?: string, options?: { force?: boolean }) => {
+      process.exitCode = await runInit(stack, directory, deps, { force: options?.force ?? false });
     });
 }
 
@@ -38,7 +49,8 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
 export async function runInit(
   stack: string | undefined,
   directory: string | undefined,
-  deps: InitCommandDependencies
+  deps: InitCommandDependencies,
+  options?: { force?: boolean }
 ): Promise<number> {
   const { registry, stdout, stderr } = deps;
 
@@ -63,7 +75,10 @@ export async function runInit(
   const targetDir = resolve(deps.cwd(), directory);
 
   try {
-    const result = await runPlugin(plugin, targetDir, deps.ports);
+    const result = await runPlugin(plugin, targetDir, deps.ports, {
+      force: options?.force ?? false,
+      ignoreEntries: GOVERNANCE_ENTRIES,
+    });
     stdout(`Scaffolded ${plugin.id} project in ${result.targetDir} (${result.filesWritten.length} files).`);
     return 0;
   } catch (err) {

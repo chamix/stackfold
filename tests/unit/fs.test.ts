@@ -64,6 +64,50 @@ describe('NodeFileWriter.ensureEmptyDir — §3.3 no pre-existing project is tou
   });
 });
 
+describe('NodeFileWriter.ensureEmptyDir — governance allowlist & --force (testing finding #1)', () => {
+  it('ignores the named entries when deciding emptiness', async () => {
+    const target = join(root, 'governance-only');
+    await mkdir(target);
+    await writeFile(join(target, '.git'), '');
+    await mkdir(join(target, '.agents'));
+
+    await expect(
+      writer.ensureEmptyDir(target, { ignoreEntries: ['.git', '.agents'] })
+    ).resolves.toBeUndefined();
+    expect(await readdir(target)).toEqual(['.agents', '.git']);
+  });
+
+  it('still rejects when a non-ignored entry sits alongside the ignored ones', async () => {
+    const target = join(root, 'governance-plus-real');
+    await mkdir(target);
+    await writeFile(join(target, '.git'), '');
+    await mkdir(join(target, '.agents'));
+    await writeFile(join(target, 'real-file.txt'), 'conflict');
+
+    await expect(
+      writer.ensureEmptyDir(target, { ignoreEntries: ['.git', '.agents'] })
+    ).rejects.toBeInstanceOf(TargetNotEmptyError);
+  });
+
+  it('force:true skips the non-empty check and leaves existing content untouched', async () => {
+    const target = join(root, 'forced');
+    await mkdir(target);
+    await writeFile(join(target, 'keep.txt'), 'original');
+
+    await expect(writer.ensureEmptyDir(target, { force: true })).resolves.toBeUndefined();
+    expect(await readdir(target)).toEqual(['keep.txt']);
+    expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('original');
+  });
+
+  it('force:true still rejects when the target path is an existing file', async () => {
+    const target = join(root, 'forced-file');
+    await writeFile(target, 'not a dir');
+
+    await expect(writer.ensureEmptyDir(target, { force: true })).rejects.toThrow(/not a directory/);
+    expect(await readFile(target, 'utf8')).toBe('not a dir');
+  });
+});
+
 describe('NodeFileWriter.writeFile', () => {
   it('writes string content, creating nested parent directories', async () => {
     const file = join(root, 'proj', 'src', 'deep', 'index.ts');
