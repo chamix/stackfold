@@ -38,6 +38,13 @@ const TIER1_PATHS = [
   'src/renderer/app.css',
   'scripts/build.mjs',
   'electron-builder.yml',
+  'playwright.config.ts',
+  'tests/e2e/support/fixtures.ts',
+  'tests/e2e/support/pollUntilStable.ts',
+  'tests/e2e/smoke.spec.ts',
+  'tests/unit/pollUntilStable.test.ts',
+  '.github/workflows/ci.yml',
+  '.github/workflows/release.yml',
 ];
 
 function question(id: string): QuestionDefinition {
@@ -232,12 +239,14 @@ describe('electron-ts plugin — Tier-1 file set (tier 2: content invariants)', 
       '@types/node': '^24.19.0',
       esbuild: '^0.28.2',
       'electron-builder': '^26.15.3',
+      '@playwright/test': '^1.64.0',
     });
     expect(pkg.scripts).toMatchObject({
       build: 'node scripts/build.mjs',
       package: 'electron-builder',
       typecheck: 'tsc --noEmit -p tsconfig.typecheck.json',
       test: 'vitest run',
+      'test:e2e': 'playwright test',
     });
   });
 

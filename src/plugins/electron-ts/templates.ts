@@ -171,6 +171,7 @@ function renderPackageJson(ctx: ResolvedContext): string {
       package: 'electron-builder',
       typecheck: 'tsc --noEmit -p tsconfig.typecheck.json',
       test: 'vitest run',
+      'test:e2e': 'playwright test',
     },
     ...(needsZod(ctx) ? { dependencies: { zod: '^4.6.5' } } : {}),
     devDependencies: {
@@ -180,6 +181,7 @@ function renderPackageJson(ctx: ResolvedContext): string {
       '@types/node': '^24.19.0',
       esbuild: '^0.28.2',
       'electron-builder': '^26.15.3',
+      '@playwright/test': '^1.64.0',
     },
   });
 }
@@ -208,10 +210,42 @@ function renderReadme(ctx: ResolvedContext): string {
     '- `npm run build`: compile TypeScript to `dist/`',
     '- `npm run typecheck`: type-check without emitting',
     '- `npm test`: run the unit tests',
+    '- `npm run test:e2e`: launch the real built app with Playwright and run the',
+    '  e2e smoke suite (run `npm run build` first)',
+    '- `npm run package`: build a Windows installer with electron-builder',
+    '',
+    '## CI & releases',
+    '',
+    '`.github/workflows/ci.yml` runs on every pull request: typecheck, build,',
+    'unit tests, then the e2e suite, on `windows-latest`. It runs `npm ci`,',
+    'which requires a committed `package-lock.json` — this project has none',
+    'until your first `npm install`, so commit it once you have run that',
+    'locally; otherwise the first CI run fails loudly, by design.',
+    '',
+    '`.github/workflows/release.yml` runs the same checks on a `v*.*.*` tag,',
+    'builds a Windows installer with electron-builder, and uploads it as a',
+    'workflow artifact. It does **not** publish anywhere',
+    '(`electron-builder.yml`\'s `publish: null`). To switch it to actually',
+    'publishing a release, make these three edits:',
+    '',
+    '1. `electron-builder.yml`: change `publish: null` to a real target (e.g.',
+    '   `github`).',
+    '2. `release.yml`: change `--publish never` to `--publish always`.',
+    '3. `release.yml`: change `permissions: contents: read` to',
+    '   `contents: write`.',
   );
 }
 
-const GITIGNORE = lines('node_modules/', 'dist/', 'out/', '.vite/', '*.log');
+const GITIGNORE = lines(
+  'node_modules/',
+  'dist/',
+  'out/',
+  '.vite/',
+  '*.log',
+  'release/',
+  'test-results/',
+  'playwright-report/'
+);
 
 function renderLicense(ctx: ResolvedContext): string {
   return lines(
@@ -1402,6 +1436,314 @@ function renderMenuTs(ctx: ResolvedContext): string {
   return lines(...imports, '', ...body);
 }
 
+// ---------------------------------------------------------------------------
+// Cycle B2: e2e harness (Playwright) + generated CI workflows
+// (initial_scaffold.md — "electron-ts e2e harness + CI (Cycle B2)").
+// Every entry below is unconditional Tier-1 baseline content, present in
+// every generated project regardless of any Tier-2 flag (functional_domain.md
+// §3.8 — "a generated app must actually start" — this is what proves it).
+// ---------------------------------------------------------------------------
+
+const PLAYWRIGHT_CONFIG = lines(
+  "import { defineConfig } from '@playwright/test';",
+  '',
+  'export default defineConfig({',
+  "  testDir: './tests/e2e',",
+  "  testMatch: '**/*.spec.ts',",
+  '  // Capped at 2: running more concurrent Electron processes caused',
+  '  // intermittent hard worker-process crashes on Windows (fastfail, exit code',
+  '  // 3221226505) under the CPU-count default. Measured mitigation; root cause',
+  '  // not isolated. Revisit if it ever gets its own investigation.',
+  '  workers: 2,',
+  '});'
+);
+
+/**
+ * E2E harness shape (functional_domain.md "E2E harness shape"): launch the
+ * real built app, give every run its own disposable data directory, strip
+ * the one env var that would make Electron run as plain Node, and wait for
+ * a real load-state signal rather than a fixed sleep (L2 — no further
+ * rendererReady/failureCapture helpers at this cycle).
+ */
+const E2E_FIXTURES = lines(
+  "import { existsSync, mkdtempSync, rmSync } from 'node:fs';",
+  "import { tmpdir } from 'node:os';",
+  "import { join } from 'node:path';",
+  "import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';",
+  '',
+  "// The generated package.json has no \"type\": \"module\", so this file runs as",
+  '// CommonJS under Playwright\'s TS transform and __dirname is available.',
+  "const REPO_ROOT = join(__dirname, '../../..');",
+  '',
+  'function requireBuiltMain(): void {',
+  "  if (!existsSync(join(REPO_ROOT, 'dist/main/index.js'))) {",
+  "    throw new Error('dist/main/index.js is missing — run `npm run build` first.');",
+  '  }',
+  '}',
+  '',
+  '/**',
+  ' * electron.launch()\'s env option requires string values only (no',
+  ' * `undefined`), unlike `process.env` itself. ELECTRON_RUN_AS_NODE is',
+  ' * stripped so the launched app runs as a real Electron app, not plain Node.',
+  ' */',
+  'function launchEnv(): Record<string, string> {',
+  '  const env: Record<string, string> = {};',
+  '  for (const [key, value] of Object.entries(process.env)) {',
+  "    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;",
+  '  }',
+  '  return env;',
+  '}',
+  '',
+  'export const test = base.extend<{',
+  '  userDataDir: string;',
+  '  electronApp: ElectronApplication;',
+  '  window: Page;',
+  '}>({',
+  '  userDataDir: async ({}, use) => {',
+  "    const dir = mkdtempSync(join(tmpdir(), 'e2e-'));",
+  '    try {',
+  '      await use(dir);',
+  '    } finally {',
+  '      // Windows can briefly hold Chromium files open after the app closes.',
+  '      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });',
+  '    }',
+  '  },',
+  '',
+  '  electronApp: async ({ userDataDir }, use) => {',
+  '    requireBuiltMain();',
+  '    // --user-data-dir= is load-bearing, not cosmetic: electron.launch()',
+  '    // builds argv from `args` only and never reads a `userDataDir` option,',
+  '    // so every run would otherwise share the real, shared profile.',
+  '    const app = await electron.launch({',
+  "      args: [`--user-data-dir=${userDataDir}`, '.'],",
+  '      cwd: REPO_ROOT,',
+  '      env: launchEnv(),',
+  '    });',
+  '    try {',
+  '      await use(app);',
+  '    } finally {',
+  '      await app.close();',
+  '    }',
+  '  },',
+  '',
+  '  window: async ({ electronApp }, use) => {',
+  '    const window = await electronApp.firstWindow();',
+  "    await window.waitForLoadState('domcontentloaded');",
+  '    await use(window);',
+  '  },',
+  '});',
+  '',
+  "export { expect } from '@playwright/test';"
+);
+
+/**
+ * Pure leaf helper (initial_scaffold.md L3): polls `read()` until it returns
+ * the same value `stableCount` times in a row, or throws once `timeoutMs`
+ * elapses — "wait for a stable state, not a fixed sleep"
+ * (functional_domain.md "E2E harness shape"). Comparison is by `Object.is`,
+ * so T should be a primitive (a count, a length, a flag), not an object that
+ * changes identity on every read.
+ */
+const POLL_UNTIL_STABLE = lines(
+  'export interface PollUntilStableOptions {',
+  '  /** Maximum total time to wait, in ms. Default 5000. */',
+  '  timeoutMs?: number;',
+  '  /** Delay between polls, in ms. Default 50. */',
+  '  intervalMs?: number;',
+  '  /** Consecutive identical reads required before considering the value stable. Default 3. */',
+  '  stableCount?: number;',
+  '}',
+  '',
+  'export async function pollUntilStable<T>(',
+  '  read: () => T | Promise<T>,',
+  '  options: PollUntilStableOptions = {}',
+  '): Promise<T> {',
+  '  const timeoutMs = options.timeoutMs ?? 5000;',
+  '  const intervalMs = options.intervalMs ?? 50;',
+  '  const stableCount = options.stableCount ?? 3;',
+  '  if (stableCount < 1) {',
+  "    throw new Error('pollUntilStable: stableCount must be at least 1');",
+  '  }',
+  '',
+  '  const deadline = Date.now() + timeoutMs;',
+  '  let lastValue: T | undefined;',
+  '  let consecutive = 0;',
+  '',
+  '  for (;;) {',
+  '    const value = await read();',
+  '    consecutive = consecutive > 0 && Object.is(value, lastValue) ? consecutive + 1 : 1;',
+  '    lastValue = value;',
+  '',
+  '    if (consecutive >= stableCount) return value;',
+  '    if (Date.now() >= deadline) {',
+  '      throw new Error(`pollUntilStable: timed out after ${timeoutMs}ms waiting for a stable value`);',
+  '    }',
+  "    await new Promise((resolve) => setTimeout(resolve, intervalMs));",
+  '  }',
+  '}'
+);
+
+/** Exercises the pure leaf above directly (L3 — shipped, not dead code). */
+const POLL_UNTIL_STABLE_TEST = lines(
+  "import { describe, expect, it } from 'vitest';",
+  "import { pollUntilStable } from '../e2e/support/pollUntilStable.js';",
+  '',
+  "describe('pollUntilStable', () => {",
+  "  it('resolves once the same value is read stableCount times in a row', async () => {",
+  '    let i = 0;',
+  '    const read = () => {',
+  '      i += 1;',
+  '      return i < 3 ? i : 3; // settles at 3 from the 3rd read onward',
+  '    };',
+  '    const result = await pollUntilStable(read, { intervalMs: 1, stableCount: 3, timeoutMs: 1000 });',
+  '    expect(result).toBe(3);',
+  '  });',
+  '',
+  "  it('throws once timeoutMs elapses without a stable value', async () => {",
+  '    let i = 0;',
+  '    await expect(',
+  '      pollUntilStable(',
+  '        () => {',
+  '          i += 1;',
+  '          return i;',
+  '        },',
+  '        { intervalMs: 1, stableCount: 2, timeoutMs: 20 }',
+  '      )',
+  '    ).rejects.toThrow(/timed out/);',
+  '  });',
+  '',
+  "  it('rejects a stableCount below 1', async () => {",
+  '    await expect(pollUntilStable(() => 1, { stableCount: 0 })).rejects.toThrow(/stableCount/);',
+  '  });',
+  '',
+  "  it('supports an async read()', async () => {",
+  "    const result = await pollUntilStable(async () => 'done', { stableCount: 2, intervalMs: 1, timeoutMs: 500 });",
+  "    expect(result).toBe('done');",
+  '  });',
+  '});'
+);
+
+/**
+ * The §3.8 launch check — 4 tests. No free-text answer is ever
+ * interpolated (L5): BRIDGE_GLOBAL and EXPECTED_BRIDGE_KEYS are derived
+ * tokens only (ctx.bridgeGlobal, and a flag-derived key list), never
+ * appName/description/author.
+ */
+function renderSmokeSpec(ctx: ResolvedContext): string {
+  const expectedBridgeKeys = [...(ctx.includeSettings ? ['settings'] : []), ...(ctx.includeSkins ? ['skins'] : [])].sort();
+
+  return lines(
+    "import { test, expect } from './support/fixtures.js';",
+    '',
+    `const BRIDGE_GLOBAL = ${JSON.stringify(ctx.bridgeGlobal)};`,
+    `const EXPECTED_BRIDGE_KEYS: string[] = ${JSON.stringify(expectedBridgeKeys)};`,
+    '',
+    "test.describe('smoke', () => {",
+    "  test('launches and renders the placeholder', async ({ electronApp, window }) => {",
+    '    expect(electronApp.windows()).toHaveLength(1);',
+    "    const heading = window.locator('h1');",
+    '    await expect(heading).toBeVisible();',
+    '    expect(await heading.textContent()).toBe(await window.title());',
+    '  });',
+    '',
+    "  test('renderer is isolated from Node', async ({ window }) => {",
+    '    const result = await window.evaluate(() => ({',
+    "      hasRequire: typeof (globalThis as Record<string, unknown>)['require'],",
+    "      hasProcess: typeof (globalThis as Record<string, unknown>)['process'],",
+    "      hasModule: typeof (globalThis as Record<string, unknown>)['module'],",
+    '    }));',
+    "    expect(result.hasRequire).toBe('undefined');",
+    "    expect(result.hasProcess).toBe('undefined');",
+    "    expect(result.hasModule).toBe('undefined');",
+    '  });',
+    '',
+    "  test('bridge exposes only the declared surface', async ({ window }) => {",
+    '    const keys = await window.evaluate(',
+    '      (bridgeGlobal) => Object.keys((globalThis as Record<string, unknown>)[bridgeGlobal] ?? {}).sort(),',
+    '      BRIDGE_GLOBAL',
+    '    );',
+    '    expect(keys).toEqual(EXPECTED_BRIDGE_KEYS);',
+    '  });',
+    '',
+    "  test('application menu is installed', async ({ electronApp }) => {",
+    '    const labels = await electronApp.evaluate(({ Menu }) =>',
+    '      (Menu.getApplicationMenu()?.items ?? []).map((item) => item.label)',
+    '    );',
+    "    expect(labels).toContain('File');",
+    '  });',
+    '});'
+  );
+}
+
+/**
+ * Least-privilege, no secrets anywhere (L6, D2): verifies on every PR, on
+ * `windows-latest`, through typecheck/build/unit/e2e. `npm ci` requires a
+ * committed lockfile (L4) — documented in the generated README.
+ */
+const CI_WORKFLOW = lines(
+  'name: CI',
+  'on:',
+  '  pull_request:',
+  '    branches: [main]',
+  'permissions:',
+  '  contents: read',
+  'jobs:',
+  '  verify:',
+  '    runs-on: windows-latest',
+  '    steps:',
+  '      - uses: actions/checkout@v7',
+  '      - uses: actions/setup-node@v7',
+  '        with:',
+  '          node-version: 24',
+  '          cache: npm',
+  '      - run: npm ci',
+  '      - run: npm run typecheck',
+  '      - run: npm run build',
+  '      - run: npm test',
+  '      - run: npm run test:e2e',
+  '      - uses: actions/upload-artifact@v7',
+  '        if: failure()',
+  '        with:',
+  '          name: test-results',
+  '          path: test-results/',
+  '          if-no-files-found: ignore'
+);
+
+/**
+ * Builds and uploads an installer as a workflow artifact; never publishes
+ * (D3 — consistent with electron-builder.yml's `publish: null`). The
+ * generated README documents the three edits needed to switch this to
+ * actually publishing.
+ */
+const RELEASE_WORKFLOW = lines(
+  'name: Release',
+  'on:',
+  '  push:',
+  "    tags: ['v*.*.*']",
+  'permissions:',
+  '  contents: read',
+  'jobs:',
+  '  release:',
+  '    runs-on: windows-latest',
+  '    steps:',
+  '      - uses: actions/checkout@v7',
+  '      - uses: actions/setup-node@v7',
+  '        with:',
+  '          node-version: 24',
+  '          cache: npm',
+  '      - run: npm ci',
+  '      - run: npm run typecheck',
+  '      - run: npm run build',
+  '      - run: npm test',
+  '      - run: npm run test:e2e',
+  '      - run: npx electron-builder --win --publish never',
+  '      - uses: actions/upload-artifact@v7',
+  '        with:',
+  '          name: release',
+  '          path: release/*.exe',
+  '          if-no-files-found: error'
+);
+
 /** Cycle A + B1 file set, in emission order. Adding a file = adding an entry. */
 export const TIER1_FILES: readonly TierFile[] = [
   { path: 'package.json', render: renderPackageJson },
@@ -1432,4 +1774,12 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'src/renderer/app.css', render: constant(RENDERER_CSS) },
   { path: 'scripts/build.mjs', render: constant(BUILD_SCRIPT) },
   { path: 'electron-builder.yml', render: renderElectronBuilderYml },
+  // Cycle B2 — e2e harness + CI (initial_scaffold.md), all unconditional.
+  { path: 'playwright.config.ts', render: constant(PLAYWRIGHT_CONFIG) },
+  { path: 'tests/e2e/support/fixtures.ts', render: constant(E2E_FIXTURES) },
+  { path: 'tests/e2e/support/pollUntilStable.ts', render: constant(POLL_UNTIL_STABLE) },
+  { path: 'tests/e2e/smoke.spec.ts', render: renderSmokeSpec },
+  { path: 'tests/unit/pollUntilStable.test.ts', render: constant(POLL_UNTIL_STABLE_TEST) },
+  { path: '.github/workflows/ci.yml', render: constant(CI_WORKFLOW) },
+  { path: '.github/workflows/release.yml', render: constant(RELEASE_WORKFLOW) },
 ];

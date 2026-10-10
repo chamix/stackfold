@@ -70,6 +70,13 @@ const BASELINE_WITH_MENU = [
   'src/renderer/app.css',
   'scripts/build.mjs',
   'electron-builder.yml',
+  'playwright.config.ts',
+  'tests/e2e/support/fixtures.ts',
+  'tests/e2e/support/pollUntilStable.ts',
+  'tests/e2e/smoke.spec.ts',
+  'tests/unit/pollUntilStable.test.ts',
+  '.github/workflows/ci.yml',
+  '.github/workflows/release.yml',
 ];
 
 /** Expected file set for an arbitrary flag combination, in emission order. */
@@ -102,6 +109,13 @@ function expectedFileSet(flags: { includeSettings: boolean; includeSkins: boolea
     'src/renderer/app.css',
     'scripts/build.mjs',
     'electron-builder.yml',
+    'playwright.config.ts',
+    'tests/e2e/support/fixtures.ts',
+    'tests/e2e/support/pollUntilStable.ts',
+    'tests/e2e/smoke.spec.ts',
+    'tests/unit/pollUntilStable.test.ts',
+    '.github/workflows/ci.yml',
+    '.github/workflows/release.yml',
   ];
   return ordered;
 }
