@@ -10,8 +10,9 @@ import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
 import { InquirerPrompter } from '../infra/prompter.js';
 import { electronTsPlugin } from '../plugins/electron-ts/index.js';
+import { webAppSpaPlugin, webAppStandaloneHtmlPlugin } from '../plugins/web-app/index.js';
 
-const registry = new StaticPluginRegistry([electronTsPlugin]);
+const registry = new StaticPluginRegistry([electronTsPlugin, webAppSpaPlugin, webAppStandaloneHtmlPlugin]);
 
 const program = new Command();
 
