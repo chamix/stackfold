@@ -31,10 +31,13 @@
     "@playwright/test": "^1.64.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
+    "@testing-library/vue": "^8.1.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@typescript-eslint/parser": "^8.70.1",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/compiler-sfc": "^3.5.44",
     "electron": "^44.4.5",
     "eslint": "^10.11.0",
     "react": "^19.3.0",
@@ -42,7 +45,8 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.2",
+    "vue": "^3.5.44"
   },
   "type": "module",
   "engines": {

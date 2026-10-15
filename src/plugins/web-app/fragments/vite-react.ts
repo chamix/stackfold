@@ -1,10 +1,16 @@
 /**
  * `vite-react` fragment: the opinionated-by-default UI framework for
- * `web-app-spa` (initial_scaffold.md, "Content specification"). Resolves
- * `answers.framework` — this cycle it is always `'react'`; `vue`/
- * `vanilla` are Deferred to Cycle 2 as new fragment modules, with zero
+ * `web-app-spa` (initial_scaffold.md, "Content specification"; Cycle 2
+ * "0. Boundary correction carried in from Cycle 1"). `vue`/`vanilla` ship
+ * as sibling fragment modules (`vite-vue.ts`/`vite-vanilla.ts`) with zero
  * changes required here or in `core/composition.ts` (the OCP claim
  * SK-ADR-001 / the technical spec make explicit).
+ *
+ * Owns `@testing-library/react` (devDependency) and `src/App.test.tsx` —
+ * relocated here, content unchanged, from `vitest.ts` (Cycle 1 shipped
+ * these on the framework-agnostic `vitest` fragment, a latent SRP
+ * violation: every framework fragment now owns its own smoke test and its
+ * own testing-library adapter, same shape, different adapter).
  */
 import type { Answers } from '../../../core/types.js';
 import type { BlueprintFragment } from '../../../core/composition.js';
@@ -86,6 +92,20 @@ function renderAppTsx(ctx: { appName: string }): string {
   );
 }
 
+/** Relocated verbatim from `vitest.ts` (Cycle 2 "0. Boundary correction"). */
+const APP_TEST = lines(
+  "import { render, screen } from '@testing-library/react';",
+  "import { describe, expect, it } from 'vitest';",
+  "import { App } from './App.js';",
+  '',
+  "describe('App', () => {",
+  "  it('renders', () => {",
+  '    render(<App />);',
+  '    expect(screen.getByRole(\'main\')).toBeInTheDocument();',
+  '  });',
+  '});'
+);
+
 export function viteReactFragment(answers: Answers): BlueprintFragment {
   const ctx = resolveSharedContext(answers);
 
@@ -102,6 +122,7 @@ export function viteReactFragment(answers: Answers): BlueprintFragment {
             '@vitejs/plugin-react': '^6.1.2',
             '@types/react': '^19.3.0',
             '@types/react-dom': '^19.3.0',
+            '@testing-library/react': '^16.3.3',
           },
           scripts: { dev: 'vite', build: 'vite build' },
         }),
@@ -110,6 +131,7 @@ export function viteReactFragment(answers: Answers): BlueprintFragment {
       { path: 'index.html', content: renderIndexHtml(ctx) },
       { path: 'src/main.tsx', content: MAIN_TSX },
       { path: 'src/App.tsx', content: renderAppTsx(ctx) },
+      { path: 'src/App.test.tsx', content: APP_TEST },
     ],
     postActions: [{ kind: 'npm-install' }],
   };

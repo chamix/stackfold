@@ -9,13 +9,16 @@ import type { Answers } from '../../src/core/types.js';
 
 /**
  * `web-app-spa` plugin — build integrity (tier 4: network, opt-in).
- * `.agents/specs/initial_scaffold.md`'s Cycle 1 "Test strategy" item 5:
- * scaffold the flavor into a real temp dir, then run the real pipeline a
- * generated project's own user would run — `npm install` (no
- * `--ignore-scripts`: the point of this tier is proving the real,
- * registry-resolved dependency graph actually installs and works, not
- * just that the build tool itself runs), `npm run build`, `npm run test`
- * — and assert every step exits 0.
+ * `.agents/specs/initial_scaffold.md`'s Cycle 1 "Test strategy" item 5
+ * (extended by Cycle 2's own item 6, "real `npm install && npm run build
+ * && npm run test` for the vue and vanilla paths — react path already
+ * covered by Cycle 1's own tier-4"): scaffold the flavor into a real temp
+ * dir, then run the real pipeline a generated project's own user would
+ * run — `npm install` (no `--ignore-scripts`: the point of this tier is
+ * proving the real, registry-resolved dependency graph actually installs
+ * and works, not just that the build tool itself runs), `npm run build`,
+ * `npm run test` — and assert every step exits 0, for each of the three
+ * `framework` values.
  *
  * Gated the same way `tests/unit/electron-ts-plugin.test.ts`'s own tier-4
  * "build integrity" section and `tests/unit/electron-ts-plugin-e2e.test.ts`
@@ -27,7 +30,8 @@ import type { Answers } from '../../src/core/types.js';
  * display-requiring Playwright launch like
  * `electron-ts-plugin-e2e.test.ts`'s `STACKFOLD_RUN_E2E_TESTS` tier.
  */
-const ANSWERS: Answers = { appName: 'My Cool App!', description: 'A demo app', author: 'Ada Lovelace' };
+const BASE_ANSWERS: Answers = { appName: 'My Cool App!', description: 'A demo app', author: 'Ada Lovelace' };
+const FRAMEWORKS = ['react', 'vue', 'vanilla'] as const;
 
 function execNpm(args: string[], cwd: string, timeout: number): Promise<{ code: number; output: string }> {
   // On Windows `npm` resolves to a `.cmd` shim, which execFile cannot spawn
@@ -52,15 +56,15 @@ if (!RUN_NETWORK_TESTS) {
 }
 
 describe.skipIf(!RUN_NETWORK_TESTS)('web-app-spa plugin — build integrity (tier 4: real npm install + build + test)', () => {
-  it(
-    'npm install + npm run build + npm run test all succeed against the real, registry-resolved dependency graph',
-    async () => {
-      const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-spa-e2e-'));
+  it.each(FRAMEWORKS)(
+    'framework: "%s" — npm install + npm run build + npm run test all succeed against the real, registry-resolved dependency graph',
+    async (framework) => {
+      const root = await mkdtemp(join(tmpdir(), `stackfold-web-app-spa-e2e-${framework}-`));
       try {
         const projectDir = join(root, 'generated');
         const writer = new NodeFileWriter();
         await writer.ensureEmptyDir(projectDir);
-        for (const file of webAppSpaPlugin.buildBlueprint(ANSWERS).files) {
+        for (const file of webAppSpaPlugin.buildBlueprint({ ...BASE_ANSWERS, framework }).files) {
           await writer.writeFile(join(projectDir, file.path), file.content);
         }
 

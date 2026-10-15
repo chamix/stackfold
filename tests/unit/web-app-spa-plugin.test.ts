@@ -52,7 +52,7 @@ describe('web-app-spa plugin — questions()', () => {
   it('framework is a select question defaulting to react (opinionated-by-default, overridable)', () => {
     const q = question('framework');
     expect(q.type).toBe('select');
-    expect(q.choices).toEqual(['react']);
+    expect(q.choices).toEqual(['react', 'vue', 'vanilla']);
     expect(q.default).toBe('react');
   });
 });
@@ -93,6 +93,11 @@ describe('web-app-spa plugin — default vs. overridden framework choice (resolv
 
 describe('web-app-spa plugin — composed blueprint (tier 2: content invariants)', () => {
   it('emits the expected file set, in fragment order (base-ts, vite-react, vitest, eslint)', () => {
+    // Cycle 2 "0. Boundary correction": src/App.test.tsx is relocated from
+    // the (framework-agnostic, after this cycle) `vitest` fragment into
+    // `vite-react` — it now appears right after src/App.tsx rather than
+    // after vitest.config.ts/src/setupTests.ts. Every other path, and its
+    // content, is unchanged.
     expect(webAppSpaPlugin.buildBlueprint(ANSWERS).files.map((f) => f.path)).toEqual([
       'package.json',
       'tsconfig.json',
@@ -102,9 +107,9 @@ describe('web-app-spa plugin — composed blueprint (tier 2: content invariants)
       'index.html',
       'src/main.tsx',
       'src/App.tsx',
+      'src/App.test.tsx',
       'vitest.config.ts',
       'src/setupTests.ts',
-      'src/App.test.tsx',
       'eslint.config.js',
     ]);
   });
