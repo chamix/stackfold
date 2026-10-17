@@ -50,6 +50,15 @@ function frameworkFragment(answers: Answers): BlueprintFragment {
 export const webAppSpaPlugin = createWebAppPlugin({
   flavorId: 'web-app-spa',
   description: 'Client-side app (React/Vue/vanilla + Vite) that calls APIs over fetch; no SSR.',
+  help: {
+    name: 'Web App (SPA)',
+    details:
+      'A Vite-powered single-page app, client-side routing-ready, no ' +
+      'server-side rendering. Choose the UI framework (React, Vue, or ' +
+      'plain vanilla TS) during init; vitest + eslint are wired in ' +
+      "regardless of framework. Talks to APIs over fetch/XHR only, after " +
+      'the initial page load.',
+  },
   flavorQuestions: [
     {
       id: 'framework',

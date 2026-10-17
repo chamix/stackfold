@@ -4,7 +4,9 @@
  * adapters and plugins and wires them into core/ (Inward Dependency Rule).
  */
 import { Command } from 'commander';
+import { registerInfoCommand } from './commands/info.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerListCommand } from './commands/list.js';
 import { NodeFileWriter } from '../infra/fs.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
@@ -29,6 +31,17 @@ registerInitCommand(program, {
     processRunner: new ExecaProcessRunner(),
   },
   cwd: () => process.cwd(),
+  stdout: (line) => console.log(line),
+  stderr: (line) => console.error(line),
+});
+
+registerListCommand(program, {
+  registry,
+  stdout: (line) => console.log(line),
+});
+
+registerInfoCommand(program, {
+  registry,
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),
 });

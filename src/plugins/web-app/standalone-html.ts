@@ -12,6 +12,14 @@ import { standaloneHtmlFragment } from './fragments/standalone-html.js';
 export const webAppStandaloneHtmlPlugin = createWebAppPlugin({
   flavorId: 'web-app-standalone-html',
   description: 'A single, dependency-free HTML file — no server, no network after load.',
+  help: {
+    name: 'Standalone HTML',
+    details:
+      'One self-contained .html file: no build step, no npm dependencies, ' +
+      'no server. Everything (markup, styles, script) lives in that one ' +
+      'file, and it never makes a network call after the page loads. Open ' +
+      'it directly in a browser — nothing to install or run.',
+  },
   flavorQuestions: [],
   selectFragments: (answers) => [standaloneHtmlFragment(answers)],
 });

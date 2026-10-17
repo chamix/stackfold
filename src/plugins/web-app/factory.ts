@@ -9,12 +9,14 @@
  * every flavor.
  */
 import { composeBlueprint, type BlueprintFragment } from '../../core/composition.js';
-import type { Answers, QuestionDefinition, StackfoldPlugin } from '../../core/types.js';
+import type { Answers, PluginHelp, QuestionDefinition, StackfoldPlugin } from '../../core/types.js';
 import { sharedQuestions } from './shared-questions.js';
 
 export interface WebAppFlavorDefinition {
   flavorId: string;
   description: string;
+  /** Optional, richer CLI help (`core/types.ts`'s `PluginHelp`) — passed through as-is, never required. */
+  help?: PluginHelp;
   /** Questions beyond the shared base (appName/description/author). */
   flavorQuestions: QuestionDefinition[];
   selectFragments(answers: Answers): BlueprintFragment[];
@@ -24,6 +26,7 @@ export function createWebAppPlugin(def: WebAppFlavorDefinition): StackfoldPlugin
   return {
     id: def.flavorId,
     description: def.description,
+    help: def.help,
 
     questions(): QuestionDefinition[] {
       return [...sharedQuestions, ...def.flavorQuestions];

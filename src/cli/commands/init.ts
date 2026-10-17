@@ -11,6 +11,7 @@ import {
 import type { PluginRegistry } from '../../core/ports.js';
 import type { Answers, AnswerValue } from '../../core/types.js';
 import { StaticPrompter } from '../../infra/prompter.js';
+import { formatPluginListLine } from '../pluginHelp.js';
 
 /**
  * The `claude-blueprints` governance workflow drops these into a target
@@ -167,7 +168,7 @@ function coerceAnswerValue(raw: string): AnswerValue {
 
 function printAvailable(registry: PluginRegistry, write: (line: string) => void): void {
   write('Available stacks:');
-  for (const p of registry.list()) write(`  ${p.id}  ${p.description}`);
+  for (const p of registry.list()) write(`  ${formatPluginListLine(p)}`);
 }
 
 /** Best-effort failure reporting (initial_scaffold.md §3.2 resolution). */

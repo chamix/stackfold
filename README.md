@@ -74,6 +74,18 @@ stackfold init electron-ts ./out --config config.json
 stackfold init electron-ts ./out --answer appName="CI Smoke Test" --answer includeSettings=false
 ```
 
+`stackfold list` shows every registered plugin, and `stackfold info <stack>`
+shows one plugin's detailed help (usage notes, prerequisites, the
+questions it will ask). A plugin's richer help (display name, details
+prose) is optional in the plugin contract — `stackfold --help`/`-h` and
+the two commands above work the same with or without it, falling back to
+the plugin's id and its mandatory one-line description:
+
+```bash
+stackfold list
+stackfold info electron-ts
+```
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
