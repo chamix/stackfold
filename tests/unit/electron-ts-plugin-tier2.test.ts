@@ -618,8 +618,7 @@ describe('electron-ts plugin — self-healing persisted-file behavior (real emit
   let workDir: string;
 
   beforeAll(async () => {
-    workDir = join(process.cwd(), 'node_modules', `.stackfold-tier2-selfheal-${Date.now()}`);
-    await mkdir(workDir, { recursive: true });
+    workDir = await mkdtemp(join(tmpdir(), 'stackfold-tier2-selfheal-'));
   });
 
   afterAll(async () => {
