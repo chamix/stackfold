@@ -83,12 +83,16 @@ const BASELINE_WITH_MENU = [
 function expectedFileSet(flags: { includeSettings: boolean; includeSkins: boolean; includeAboutHelp: boolean }): string[] {
   const { includeSettings, includeSkins, includeAboutHelp } = flags;
   const needsAtomic = includeSettings || includeSkins;
+  // Per-process tsconfig split is needed whenever any renderer .ts file
+  // exists — Skins' own renderer consumer (src/renderer/skins.ts) needs the
+  // DOM lib exactly as theme.ts does (spec: skins-renderer-consumer.md).
+  const needsRendererSplit = includeSettings || includeSkins;
   const ordered = [
     'package.json',
     'README.md',
     '.gitignore',
     'LICENSE',
-    ...(includeSettings
+    ...(needsRendererSplit
       ? ['tsconfig.base.json', 'tsconfig.main.json', 'tsconfig.renderer.json']
       : ['tsconfig.json']),
     'tsconfig.typecheck.json',
@@ -110,6 +114,7 @@ function expectedFileSet(flags: { includeSettings: boolean; includeSkins: boolea
     'src/renderer/index.html',
     'src/renderer/app.css',
     ...(includeSettings ? ['src/renderer/theme.ts'] : []),
+    ...(includeSkins ? ['src/renderer/skins.ts'] : []),
     'scripts/build.mjs',
     'electron-builder.yml',
     'playwright.config.ts',
@@ -276,8 +281,30 @@ describe('electron-ts plugin — content invariants across all 8 flag combinatio
       if (flags.includeSettings) {
         expect(html).toContain('<script type="module" src="./theme.js"></script>');
       } else {
-        expect(html).not.toContain('<script');
+        expect(html).not.toContain('./theme.js');
       }
+    }
+  );
+
+  it.each(ALL_COMBINATIONS)(
+    'renderer index.html has the skins <script> tag iff includeSkins, for %j',
+    (flags) => {
+      const answers = answersFor(flags);
+      const html = fileContent(answers, 'src/renderer/index.html');
+      if (flags.includeSkins) {
+        expect(html).toContain('<script type="module" src="./skins.js"></script>');
+      } else {
+        expect(html).not.toContain('./skins.js');
+      }
+    }
+  );
+
+  it.each(ALL_COMBINATIONS.filter((f) => !f.includeSettings && !f.includeSkins))(
+    'renderer index.html has no <script> tag at all when neither Settings nor Skins is selected, for %j',
+    (flags) => {
+      const answers = answersFor(flags);
+      const html = fileContent(answers, 'src/renderer/index.html');
+      expect(html).not.toContain('<script');
     }
   );
 
@@ -306,6 +333,27 @@ describe('electron-ts plugin — content invariants across all 8 flag combinatio
     }
   );
 
+  it.each(ALL_COMBINATIONS.filter((f) => f.includeSkins))(
+    'src/renderer/skins.ts consumes the bridge, never ipcRenderer/require directly, for %j (guardrail §3.4)',
+    (flags) => {
+      const answers = answersFor(flags);
+      const skins = fileContent(answers, 'src/renderer/skins.ts');
+      expect(skins).toContain('.skins.list()');
+      expect(skins).toContain('.skins.getActive()');
+      expect(skins).toContain('.skins.onChange(');
+      expect(skins).toContain("getElementById('skin')");
+      expect(skins).not.toContain('ipcRenderer');
+      expect(skins).not.toContain('require(');
+    }
+  );
+
+  it('skinsStore.ts setActiveSkinName() body notifies listeners, same as setSkins()/rereadSkinsOnFocus() (spec: skins-renderer-consumer.md)', () => {
+    const src = fileContent({ ...BASE_ANSWERS, includeSkins: true }, 'src/main/skinsStore.ts');
+    const match = src.match(/export function setActiveSkinName\(name: string\): void \{[\s\S]*?\n\}/);
+    expect(match).not.toBeNull();
+    expect(match![0]).toContain('listeners.forEach((listener) => listener(current.skins));');
+  });
+
   it('tsconfig.renderer.json declares DOM lib and tsconfig.main.json does not, for an includeSettings: true combination', () => {
     const answers = answersFor({ includeSettings: true, includeSkins: false, includeAboutHelp: false });
     const rendererConfig = fileContent(answers, 'tsconfig.renderer.json');
@@ -314,7 +362,7 @@ describe('electron-ts plugin — content invariants across all 8 flag combinatio
     expect(mainConfig).not.toContain('DOM');
   });
 
-  it.each(ALL_COMBINATIONS.filter((f) => f.includeSettings))(
+  it.each(ALL_COMBINATIONS.filter((f) => f.includeSettings || f.includeSkins))(
     'tsconfig.renderer.json overrides module/moduleResolution to emit real browser ESM, independent of package.json "type" (%j) (review_report.md §5 fix)',
     (flags) => {
       const answers = answersFor(flags);
@@ -738,6 +786,17 @@ describe('electron-ts plugin — self-healing persisted-file behavior (real emit
       await mod.rereadSkinsOnFocus();
       expect(mod.getSkins()).toEqual(before);
       await rm(join(userDataDir, 'skins.json'), { force: true });
+    });
+
+    it('setActiveSkinName() notifies listeners, not just setSkins()/rereadSkinsOnFocus() (spec: skins-renderer-consumer.md)', async () => {
+      const mod = await import(pathToFileURL(join(dir, 'skinsStore.js')).href + '?activename=1');
+      await mod.setSkins([{ name: 'dark', css: 'body { color: red; }' }]);
+      const seen: unknown[] = [];
+      const unsubscribe = mod.onSkinsChange((skins: unknown) => seen.push(skins));
+      mod.setActiveSkinName('dark');
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toEqual([{ name: 'dark', css: 'body { color: red; }' }]);
+      unsubscribe();
     });
 
     it('registerSkinsIpcHandlers rejects an untrusted sender and allows a trusted one (skins:list)', async () => {
