@@ -594,6 +594,12 @@ function renderMainIndex(ctx: ResolvedContext): string {
   "import { secureWebPreferences } from './windowConfig.js';",
   "import { buildMenuTemplate } from './menu.js';",
   ...(needsTrustedSenderRegistry(ctx) ? ["import { trustWebContents, untrustWebContents } from './ipc.js';"] : []),
+  ...(ctx.includeAboutHelp
+    ? [
+        "import { closeAboutWindow } from './aboutWindow.js';",
+        "import { closeHelpWindow } from './helpWindow.js';",
+      ]
+    : []),
   ...(ctx.includeSettings
     ? [
         "import {",
@@ -698,13 +704,14 @@ function renderMainIndex(ctx: ResolvedContext): string {
         '  });',
       ]
     : []),
-  ...(needsTrustedSenderRegistry(ctx) || ctx.includeSettings || ctx.includeSkins
+  ...(needsTrustedSenderRegistry(ctx) || ctx.includeSettings || ctx.includeSkins || ctx.includeAboutHelp
     ? [
         '',
         "  window.on('closed', () => {",
         ...(needsTrustedSenderRegistry(ctx) ? ['    untrustWebContents(windowId);'] : []),
         ...(ctx.includeSettings ? ['    unsubscribeSettingsChange();'] : []),
         ...(ctx.includeSkins ? ['    unsubscribeSkinsChange();'] : []),
+        ...(ctx.includeAboutHelp ? ['    closeAboutWindow();', '    closeHelpWindow();'] : []),
         '  });',
       ]
     : []),
@@ -1456,6 +1463,10 @@ const ABOUT_WINDOW = lines(
   '  window.loadURL(`data:text/html,${encodeURIComponent(buildAboutHtml())}`).catch((error: unknown) => {',
   "    console.error('Failed to load About window', error);",
   '  });',
+  '}',
+  '',
+  'export function closeAboutWindow(): void {',
+  '  aboutWindow?.close();',
   '}'
 );
 
@@ -1518,6 +1529,10 @@ const HELP_WINDOW = lines(
   '  window.loadURL(`data:text/html,${encodeURIComponent(buildHelpHtml())}`).catch((error: unknown) => {',
   "    console.error('Failed to load Help window', error);",
   '  });',
+  '}',
+  '',
+  'export function closeHelpWindow(): void {',
+  '  helpWindow?.close();',
   '}'
 );
 
