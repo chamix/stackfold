@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e:playground": "node scripts/e2e-playground.mjs"
   },
   "keywords": [
     "scaffolding",
