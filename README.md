@@ -4,18 +4,23 @@ Stack-agnostic scaffolding CLI with a plugin-based generator system.
 
 ## Status
 
-Early scaffold. The CLI runs end-to-end (`stackfold init <stack>`) but no
-plugin is implemented yet — `init` reports "not implemented" for every
-stack, on purpose, so the wiring can be proven before any real generator
-logic lands.
+Three plugins implemented and tested:
+
+- **`electron-ts`** — Electron + TypeScript desktop app shell (sandboxed
+  windows, external-link policy, narrow preload bridge), with optional
+  Settings (Dark Mode), Skins, and About/Help features.
+- **`web-app-spa`** — client-side app (React, Vue, or vanilla + Vite)
+  that calls APIs over fetch; no SSR.
+- **`web-app-standalone-html`** — a single, dependency-free HTML file —
+  no server, no network call after the initial load.
 
 ## Why
 
-Built to stop re-solving the same Electron+TypeScript app shell from
-scratch for each new personal project (starting from the `md-view` /
-`md-presenter` lineage), but designed stack-agnostic from day one: the
-CLI core doesn't know about Electron — that lives entirely in the
-`electron-ts` plugin. Adding support for another stack later means
+Built to stop re-solving the same app shell from scratch for each new
+personal project (starting from the `md-view` / `md-presenter` lineage
+for `electron-ts`), but designed stack-agnostic from day one: the CLI
+core doesn't know about Electron, React, Vue, or plain HTML — each lives
+entirely in its own plugin. Adding support for another stack later means
 writing another plugin, not touching the core.
 
 ## Architecture
@@ -26,7 +31,8 @@ Clean-architecture-ish layering, dependencies point inward:
 src/
   core/       domain types + pure orchestration logic (no I/O)
   plugins/    one folder per supported stack, each implementing the
-              plugin contract (electron-ts is the first)
+              plugin contract (electron-ts, web-app-spa,
+              web-app-standalone-html)
   infra/      adapters: file system, git (execa), prompts (@inquirer),
               plugin discovery (cosmiconfig)
   cli/        composition root — commander wiring, entry point
@@ -51,6 +57,8 @@ adapters into the orchestrator.
 ```bash
 npm install
 npm run dev -- init electron-ts   # run the CLI without building
+npm run dev -- init web-app-spa
+npm run dev -- init web-app-standalone-html
 npm run build                     # tsc -> dist/
 npm test                          # vitest
 npm run typecheck                 # tsc --noEmit
