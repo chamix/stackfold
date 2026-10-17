@@ -388,6 +388,45 @@ describe('electron-ts plugin — main/index.ts wires the trust registry at windo
   });
 });
 
+describe('electron-ts plugin — main/index.ts closes About/Help windows when main window closes (lifecycle fix)', () => {
+  it.each(ALL_COMBINATIONS)('closeAboutWindow/closeHelpWindow call-site wiring for %j', (flags) => {
+    const answers = answersFor(flags);
+    const src = fileContent(answers, 'src/main/index.ts');
+
+    if (flags.includeAboutHelp) {
+      expect(src).toContain("import { closeAboutWindow } from './aboutWindow.js';");
+      expect(src).toContain("import { closeHelpWindow } from './helpWindow.js';");
+
+      const closedIndex = src.indexOf("window.on('closed'");
+      const closeAboutIndex = src.indexOf('closeAboutWindow();');
+      const closeHelpIndex = src.indexOf('closeHelpWindow();');
+
+      expect(closedIndex).toBeGreaterThan(-1);
+      expect(closeAboutIndex).toBeGreaterThan(closedIndex);
+      expect(closeHelpIndex).toBeGreaterThan(closedIndex);
+
+      // Both calls must live inside the 'closed' handler body, not merely
+      // somewhere later in the file: they must precede that handler's own
+      // closing `});` (same pattern asserted for untrustWebContents, S4).
+      const closedHandlerEnd = src.indexOf('});', closedIndex);
+      expect(closedHandlerEnd).toBeGreaterThan(-1);
+      expect(closeAboutIndex).toBeLessThan(closedHandlerEnd);
+      expect(closeHelpIndex).toBeLessThan(closedHandlerEnd);
+    } else {
+      expect(src).not.toContain('closeAboutWindow');
+      expect(src).not.toContain('closeHelpWindow');
+    }
+  });
+});
+
+describe('electron-ts plugin — aboutWindow.ts/helpWindow.ts export a close function (lifecycle fix)', () => {
+  it.each(['src/main/aboutWindow.ts', 'src/main/helpWindow.ts'])('%s exports a close function, a safe no-op when not open', (path) => {
+    const src = fileContent({ ...BASE_ANSWERS, includeAboutHelp: true }, path);
+    const exportName = path.includes('about') ? 'closeAboutWindow' : 'closeHelpWindow';
+    expect(src).toContain(`export function ${exportName}`);
+  });
+});
+
 describe('electron-ts plugin — About window omits Author row with no author (guardrail 4)', () => {
   it('aboutWindow.ts reuses the same optional-author pattern as LICENSE/hasAuthor', () => {
     const src = fileContent({ ...BASE_ANSWERS, author: '', includeAboutHelp: true }, 'src/main/aboutWindow.ts');
