@@ -44,9 +44,35 @@ export interface ProjectBlueprint {
   postActions: PostActionDefinition[];
 }
 
+/**
+ * Optional, richer CLI help for a plugin, beyond the mandatory one-line
+ * `description` (used in listings). Deliberately optional on the whole
+ * contract (see `StackfoldPlugin.help`) — desirable, never mandatory, so
+ * a new plugin isn't blocked on writing prose before it can be
+ * registered. `src/cli/pluginHelp.ts` degrades gracefully, field by
+ * field, when a plugin omits this or any of its properties.
+ */
+export interface PluginHelp {
+  /** Display name shown in listings/`info`. Falls back to the plugin's `id` when absent. */
+  name?: string;
+  /**
+   * Longer-form help: usage notes, prerequisites, examples. Shown by
+   * `stackfold info <stack>` only when present — this line/section is
+   * omitted entirely from the output otherwise, never a placeholder.
+   */
+  details?: string;
+}
+
 export interface StackfoldPlugin {
   readonly id: string;
   readonly description: string;
+
+  /**
+   * Optional, richer help shown by `stackfold list`/`stackfold info`.
+   * Absent entirely is a fully supported, first-class state — see
+   * `PluginHelp`'s own doc comment.
+   */
+  readonly help?: PluginHelp;
 
   /** Pure — declares what to ask. The orchestrator does the asking. */
   questions(): QuestionDefinition[];

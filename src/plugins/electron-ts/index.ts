@@ -31,6 +31,18 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
     id: 'electron-ts',
     description:
       'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge).',
+    help: {
+      name: 'Electron + TypeScript',
+      details:
+        'Generates a Tier-1 Electron shell: context isolation + a disabled ' +
+        'Node integration renderer, a narrow typed preload bridge (no raw ' +
+        'ipcRenderer exposure), and a policy that opens external links in ' +
+        'the OS browser instead of a new Electron window. ' +
+        'Settings (Dark Mode), Skins (user-editable visual presets) and ' +
+        'About/Help windows are optional, prompted during init. ' +
+        'Requires Node 22+ and enough disk/network for the Electron binary ' +
+        'download on first `npm install`.',
+    },
 
     questions(): QuestionDefinition[] {
       return [
