@@ -3,7 +3,8 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { createElectronTsPlugin } from '../../src/plugins/electron-ts/index.js';
 import { NodeFileWriter } from '../../src/infra/fs.js';
 import type { Answers } from '../../src/core/types.js';
@@ -340,11 +341,15 @@ function execNpm(args: string[], cwd: string, timeout: number): Promise<{ code: 
 }
 
 /**
- * Tier 5 (new, Cycle B2 spec "Test strategy" item 5): the real pipeline —
- * generate -> `npm install` (WITHOUT --ignore-scripts: the Electron binary
- * must actually download) -> `npm run build` -> `npm run test:e2e` -> assert
- * exit 0 — for both the all-flags-false and all-flags-true combinations.
- * Needs a real display and real network access, so it is opt-in only.
+ * Tier 5 (Cycle B2 spec "Test strategy" item 5; extended 2026-10-17 —
+ * "cli-console-e2e-harness" — to go through the real CLI console instead of
+ * calling the plugin API in-process): the real pipeline —
+ * `node dist/cli/index.js init electron-ts <dir> --answer ...` (the actual
+ * published entry point, exactly as a user would invoke it from a terminal)
+ * -> `npm install` (WITHOUT --ignore-scripts: the Electron binary must
+ * actually download) -> `npm run build` -> `npm run test:e2e` -> assert exit
+ * 0 — for both the all-flags-false and all-flags-true combinations. Needs a
+ * real display and real network access, so it is opt-in only.
  */
 const RUN_E2E_TESTS = process.env['STACKFOLD_RUN_E2E_TESTS'] === '1';
 if (!RUN_E2E_TESTS) {
@@ -354,39 +359,96 @@ if (!RUN_E2E_TESTS) {
   );
 }
 
-describe.skipIf(!RUN_E2E_TESTS)('electron-ts plugin — launch test (tier 5: real install + build + test:e2e)', () => {
-  it.each([
-    ['all-flags-false', { includeSettings: false, includeSkins: false, includeAboutHelp: false }],
-    ['all-flags-true', { includeSettings: true, includeSkins: true, includeAboutHelp: true }],
-  ] as const)(
-    '%s: npm install + npm run build + npm run test:e2e all succeed, and the generated unit tests (incl. pollUntilStable) pass',
-    async (_label, flags) => {
-      const root = await mkdtemp(join(tmpdir(), 'stackfold-electron-ts-e2e-'));
-      try {
-        const projectDir = join(root, 'generated');
-        const writer = new NodeFileWriter();
-        await writer.ensureEmptyDir(projectDir);
-        for (const file of plugin.buildBlueprint(answersFor(flags)).files) {
-          await writer.writeFile(join(projectDir, file.path), file.content);
+/** stackfold's own repo root, derived from this file's location (ESM-safe — no bare __dirname). */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const STACKFOLD_CLI = join(REPO_ROOT, 'dist/cli/index.js');
+
+/**
+ * Spawns the real, built `stackfold` CLI — not `plugin.buildBlueprint()` —
+ * so this tier actually exercises `cli/index.ts`/Commander/the non-interactive
+ * `--answer` path, the same binary a console user runs. No shell, so no
+ * quoting/injection concerns even though `BASE_ANSWERS.appName` contains a
+ * space (L5 precedent: argv array elements are never word-split).
+ */
+function runStackfoldInit(
+  flags: { includeSettings: boolean; includeSkins: boolean; includeAboutHelp: boolean },
+  targetDir: string,
+  timeout: number
+): Promise<{ code: number; output: string }> {
+  const args = [
+    STACKFOLD_CLI,
+    'init',
+    'electron-ts',
+    targetDir,
+    '--answer',
+    `appName=${BASE_ANSWERS.appName}`,
+    '--answer',
+    `description=${BASE_ANSWERS.description}`,
+    '--answer',
+    `author=${BASE_ANSWERS.author}`,
+    '--answer',
+    `includeSettings=${flags.includeSettings}`,
+    '--answer',
+    `includeSkins=${flags.includeSkins}`,
+    '--answer',
+    `includeAboutHelp=${flags.includeAboutHelp}`,
+  ];
+  return new Promise((resolvePromise) => {
+    execFile(process.execPath, args, { cwd: REPO_ROOT, timeout }, (error, stdout, stderr) => {
+      const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+      resolvePromise({ code, output: `${stdout}${stderr}`.trim() });
+    });
+  });
+}
+
+describe.skipIf(!RUN_E2E_TESTS)(
+  'electron-ts plugin — launch test (tier 5: real CLI console + install + build + test:e2e)',
+  () => {
+    beforeAll(async () => {
+      // dist/cli/index.js must be fresh — this is the exact file runStackfoldInit() spawns.
+      // Hook timeout is given headroom over execNpm's own timeout (review
+      // finding: identical clocks race, and vitest's generic "Hook timed
+      // out" can pre-empt the informative `expect` message below).
+      const build = await execNpm(['run', 'build'], REPO_ROOT, 2 * 60_000);
+      expect(build.code, `stackfold build failed (needed for dist/cli/index.js):\n${build.output}`).toBe(0);
+    }, 2 * 60_000 + 20_000);
+
+    it.each([
+      ['all-flags-false', { includeSettings: false, includeSkins: false, includeAboutHelp: false }],
+      ['all-flags-true', { includeSettings: true, includeSkins: true, includeAboutHelp: true }],
+    ] as const)(
+      '%s: `stackfold init` via the real CLI console + npm install + npm run build + npm run test:e2e all succeed',
+      async (_label, flags) => {
+        const root = await mkdtemp(join(tmpdir(), 'stackfold-electron-ts-e2e-'));
+        try {
+          const projectDir = join(root, 'generated');
+
+          const init = await runStackfoldInit(flags, projectDir, 30_000);
+          expect(init.code, `stackfold init failed:\n${init.output}`).toBe(0);
+
+          // No --ignore-scripts: the Electron (and Playwright browser/driver)
+          // postinstall must actually run so the launch below has a real binary.
+          const install = await execNpm(['install', '--no-audit', '--no-fund'], projectDir, 10 * 60_000);
+          expect(install.code, `npm install failed:\n${install.output}`).toBe(0);
+
+          const build = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
+          expect(build.code, `npm run build failed:\n${build.output}`).toBe(0);
+
+          const unitTests = await execNpm(['test'], projectDir, 2 * 60_000);
+          expect(unitTests.code, `npm test failed:\n${unitTests.output}`).toBe(0);
+
+          const e2e = await execNpm(['run', 'test:e2e'], projectDir, 5 * 60_000);
+          expect(e2e.code, `npm run test:e2e failed:\n${e2e.output}`).toBe(0);
+        } finally {
+          await rm(root, { recursive: true, force: true });
         }
-
-        // No --ignore-scripts: the Electron (and Playwright browser/driver)
-        // postinstall must actually run so the launch below has a real binary.
-        const install = await execNpm(['install', '--no-audit', '--no-fund'], projectDir, 10 * 60_000);
-        expect(install.code, `npm install failed:\n${install.output}`).toBe(0);
-
-        const build = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
-        expect(build.code, `npm run build failed:\n${build.output}`).toBe(0);
-
-        const unitTests = await execNpm(['test'], projectDir, 2 * 60_000);
-        expect(unitTests.code, `npm test failed:\n${unitTests.output}`).toBe(0);
-
-        const e2e = await execNpm(['run', 'test:e2e'], projectDir, 5 * 60_000);
-        expect(e2e.code, `npm run test:e2e failed:\n${e2e.output}`).toBe(0);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    },
-    15 * 60_000
-  );
-});
+      },
+      // Worst-case sum of this test's own per-stage timeouts is ~19.5 min
+      // (30s init + 10min install + 2min build + 2min unit tests + 5min
+      // e2e); 22 min gives real headroom instead of the outer `it` timeout
+      // racing — and potentially pre-empting — an inner stage's own
+      // informative failure (review finding).
+      22 * 60_000
+    );
+  }
+);
