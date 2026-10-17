@@ -157,6 +157,17 @@ function escapeHtml(value: string): string {
  * against the npm registry 2026-10-04. */
 const needsZod = (ctx: ResolvedContext): boolean => ctx.includeSettings || ctx.includeSkins;
 
+/**
+ * Per-process tsconfig split (Option B) is needed whenever *any* renderer
+ * `.ts` file exists, not only for Settings — Skins' own renderer consumer
+ * (`src/renderer/skins.ts`, spec: skins-renderer-consumer.md) needs the DOM
+ * lib exactly as `theme.ts` does, and is gated on `ctx.includeSkins`
+ * independently of `ctx.includeSettings`. The single shared `tsconfig.json`
+ * (no DOM lib) stays correct only when *neither* flag selects a renderer
+ * `.ts` file.
+ */
+const needsRendererSplit = (ctx: ResolvedContext): boolean => ctx.includeSettings || ctx.includeSkins;
+
 function renderPackageJson(ctx: ResolvedContext): string {
   return json({
     name: ctx.packageName,
@@ -437,7 +448,7 @@ const TSCONFIG_TYPECHECK_SPLIT = json({
 });
 
 function renderTsconfigTypecheck(ctx: ResolvedContext): string {
-  return ctx.includeSettings ? TSCONFIG_TYPECHECK_SPLIT : TSCONFIG_TYPECHECK;
+  return needsRendererSplit(ctx) ? TSCONFIG_TYPECHECK_SPLIT : TSCONFIG_TYPECHECK;
 }
 
 const VITEST_CONFIG = lines(
@@ -904,6 +915,7 @@ function renderRendererIndexHtml(ctx: ResolvedContext): string {
     `      <p>${description}</p>`,
     '    </main>',
     ...(ctx.includeSettings ? ['    <script type="module" src="./theme.js"></script>'] : []),
+    ...(ctx.includeSkins ? ['    <script type="module" src="./skins.js"></script>'] : []),
     '  </body>',
     '</html>',
   );
@@ -938,6 +950,59 @@ function renderRendererThemeTs(ctx: ResolvedContext): string {
     '',
     'void bridge.settings.get().then((settings) => applyTheme(settings.darkMode));',
     'bridge.settings.onChange((settings) => applyTheme(settings.darkMode));',
+  );
+}
+
+/**
+ * Skins wired to a real renderer consumer (spec: skins-renderer-consumer.md,
+ * 2026-10-17 — Decision 4 shipped the mechanism with zero presets; nothing
+ * in the renderer ever applied one). Generated only when `ctx.includeSkins`
+ * is true. Structurally the direct analog of `renderRendererThemeTs`: no new
+ * IPC surface — `skins.list()`/`skins.getActive()`/`skins.onChange()`
+ * already exist on `BridgeApi` — and the script never reaches for
+ * `ipcRenderer` or `require` directly, only the narrow bridge (§3.4). The
+ * active skin's `css` is applied as `textContent` on a dedicated
+ * `<style id="skin">` element (created lazily if absent), never a `<link>`
+ * href swap, because `Skin.css` is an inline CSS string, not a file path.
+ * `onChange()`'s callback payload is the skin list only, never the active
+ * name, so `applyActiveSkin()` re-fetches `getActive()` on every
+ * notification rather than trusting the callback argument — this is also
+ * what makes the `setActiveSkinName()` listener-notification fix (same
+ * spec) visibly matter: without it, picking a skin from the menu would
+ * never trigger this re-apply. A missing/removed active skin
+ * (`getActive()` resolving to `undefined`) is a safe no-op: the `<style>`
+ * tag is cleared, not left stale.
+ */
+function renderRendererSkinsTs(ctx: ResolvedContext): string {
+  return lines(
+    "import type { BridgeApi } from '../preload/api.js';",
+    '',
+    'declare global {',
+    '  interface Window {',
+    `    ${ctx.bridgeGlobal}: BridgeApi;`,
+    '  }',
+    '}',
+    '',
+    `const bridge = window.${ctx.bridgeGlobal};`,
+    '',
+    'function styleTag(): HTMLStyleElement {',
+    "  let tag = document.getElementById('skin') as HTMLStyleElement | null;",
+    '  if (!tag) {',
+    "    tag = document.createElement('style');",
+    "    tag.id = 'skin';",
+    '    document.head.appendChild(tag);',
+    '  }',
+    '  return tag;',
+    '}',
+    '',
+    'async function applyActiveSkin(): Promise<void> {',
+    '  const [skins, activeName] = await Promise.all([bridge.skins.list(), bridge.skins.getActive()]);',
+    '  const active = skins.find((skin) => skin.name === activeName);',
+    "  styleTag().textContent = active?.css ?? '';",
+    '}',
+    '',
+    'void applyActiveSkin();',
+    'bridge.skins.onChange(() => void applyActiveSkin());',
   );
 }
 
@@ -986,7 +1051,7 @@ function renderRendererCss(ctx: ResolvedContext): string {
  * are unchanged either way.
  */
 function renderBuildScript(ctx: ResolvedContext): string {
-  const tscCalls = ctx.includeSettings
+  const tscCalls = needsRendererSplit(ctx)
     ? [
         "execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });",
         '',
@@ -1331,6 +1396,7 @@ function renderSkinsStore(ctx: ResolvedContext): string {
     '    throw new Error(`Unknown skin "${name}"`);',
     '  }',
     '  activeSkinName = name;',
+    '  listeners.forEach((listener) => listener(current.skins));',
     '}',
     '',
     'export function onSkinsChange(listener: (skins: Skin[]) => void): () => void {',
@@ -1955,10 +2021,10 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'README.md', render: renderReadme },
   { path: '.gitignore', render: constant(GITIGNORE) },
   { path: 'LICENSE', include: hasAuthor, render: renderLicense },
-  { path: 'tsconfig.json', include: (ctx) => !ctx.includeSettings, render: constant(TSCONFIG) },
-  { path: 'tsconfig.base.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_BASE) },
-  { path: 'tsconfig.main.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_MAIN) },
-  { path: 'tsconfig.renderer.json', include: (ctx) => ctx.includeSettings, render: constant(TSCONFIG_RENDERER) },
+  { path: 'tsconfig.json', include: (ctx) => !needsRendererSplit(ctx), render: constant(TSCONFIG) },
+  { path: 'tsconfig.base.json', include: needsRendererSplit, render: constant(TSCONFIG_BASE) },
+  { path: 'tsconfig.main.json', include: needsRendererSplit, render: constant(TSCONFIG_MAIN) },
+  { path: 'tsconfig.renderer.json', include: needsRendererSplit, render: constant(TSCONFIG_RENDERER) },
   { path: 'tsconfig.typecheck.json', render: renderTsconfigTypecheck },
   { path: 'vitest.config.ts', render: constant(VITEST_CONFIG) },
   { path: 'src/main/windowConfig.ts', render: renderWindowConfig },
@@ -1981,6 +2047,7 @@ export const TIER1_FILES: readonly TierFile[] = [
   { path: 'src/renderer/index.html', render: renderRendererIndexHtml },
   { path: 'src/renderer/app.css', render: renderRendererCss },
   { path: 'src/renderer/theme.ts', include: (ctx) => ctx.includeSettings, render: renderRendererThemeTs },
+  { path: 'src/renderer/skins.ts', include: (ctx) => ctx.includeSkins, render: renderRendererSkinsTs },
   { path: 'scripts/build.mjs', render: renderBuildScript },
   { path: 'electron-builder.yml', render: renderElectronBuilderYml },
   // Cycle B2 — e2e harness + CI (initial_scaffold.md), all unconditional.
