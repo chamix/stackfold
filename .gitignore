@@ -10,3 +10,5 @@ coverage/
 .env
 .env.local
 .e2e-playground/
+.manual-test-playground/
+scripts/manual/
