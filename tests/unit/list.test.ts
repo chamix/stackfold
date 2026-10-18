@@ -35,7 +35,7 @@ describe('runList', () => {
 
     runList({ registry, stdout: (l) => stdout.push(l) });
 
-    expect(stdout).toEqual(['Available stacks:', '  Fake Stack  fake description']);
+    expect(stdout).toEqual(['Available stacks:', '  Fake Stack (fake)  fake description']);
   });
 
   it('reports no plugins registered rather than an empty list', () => {
