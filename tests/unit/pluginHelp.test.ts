@@ -28,19 +28,21 @@ describe('pluginDisplayName', () => {
 });
 
 describe('formatPluginListLine', () => {
-  it('matches "<displayName>  <description>" with no help', () => {
+  it('matches "<id>  <description>" with no help (name falls back to id, so no parens)', () => {
     const plugin = fakePlugin({ id: 'fake', description: 'fake description' });
     expect(formatPluginListLine(plugin)).toBe('fake  fake description');
   });
 
-  it('uses the display name in place of the id when help.name is set', () => {
+  it('includes the plugin id in parens alongside the display name when help.name is set — ' +
+    'the id is the literal value `stackfold init <stack>` expects (manual testing finding, 2026-10-18: ' +
+    'list used to print only the display name, with no way to recover the id from it)', () => {
     const plugin = fakePlugin({ id: 'fake', description: 'fake description', help: { name: 'Fake Stack' } });
-    expect(formatPluginListLine(plugin)).toBe('Fake Stack  fake description');
+    expect(formatPluginListLine(plugin)).toBe('Fake Stack (fake)  fake description');
   });
 });
 
 describe('formatPluginInfo', () => {
-  it('omits the details section entirely when help.details is absent', () => {
+  it('omits the details section entirely when help is absent', () => {
     const plugin = fakePlugin({ id: 'fake', description: 'fake description' });
     const lines = formatPluginInfo(plugin);
 
