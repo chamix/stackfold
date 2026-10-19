@@ -4,6 +4,9 @@
  * adapters and plugins and wires them into core/ (Inward Dependency Rule).
  */
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { registerInfoCommand } from './commands/info.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
@@ -16,12 +19,15 @@ import { webAppSpaPlugin, webAppStandaloneHtmlPlugin } from '../plugins/web-app/
 
 const registry = new StaticPluginRegistry([electronTsPlugin, webAppSpaPlugin, webAppStandaloneHtmlPlugin]);
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8')) as { version: string };
+
 const program = new Command();
 
 program
   .name('stackfold')
   .description('Stack-agnostic scaffolding CLI with a plugin-based generator system.')
-  .version('0.1.0');
+  .version(version);
 
 registerInitCommand(program, {
   registry,
