@@ -1,6 +1,6 @@
 {
   "name": "stackfold",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Stack-agnostic scaffolding CLI with a plugin-based generator system.",
   "main": "./dist/core/index.js",
   "files": [
