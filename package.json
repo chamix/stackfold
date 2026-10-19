@@ -66,6 +66,6 @@
   },
   "homepage": "https://github.com/chamix/stackfold#readme",
   "bin": {
-    "stackfold": "./dist/cli/index.js"
+    "stackfold": "dist/cli/index.js"
   }
 }
