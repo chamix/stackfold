@@ -13,14 +13,18 @@
  * "no free-text answer is ever interpolated unescaped" invariant
  * `electron-ts/templates.ts` already established.
  */
-import type { Answers, AnswerValue, QuestionDefinition } from '../../core/types.js';
+import type { Answers, QuestionDefinition } from '../../core/types.js';
+import {
+  MAX_PACKAGE_NAME_LENGTH,
+  appNameSchema,
+  authorSchema,
+  descriptionSchema,
+  toValidate,
+} from '../../core/validation.js';
 
 export const DEFAULT_APP_NAME = 'my-web-app';
 export const DEFAULT_DESCRIPTION = 'A web app.';
 export const DEFAULT_AUTHOR = '';
-
-/** npm's package-name length limit. */
-const MAX_PACKAGE_NAME_LENGTH = 214;
 
 export interface WebAppSharedContext {
   appName: string;
@@ -43,15 +47,6 @@ export function toPackageName(appName: string): string {
     .replace(/-+$/, '');
 }
 
-export function validateAppName(value: AnswerValue): true | string {
-  const name = String(value).trim();
-  if (name === '') return 'App name must not be empty.';
-  if (toPackageName(name) === '') {
-    return 'App name must contain at least one letter or digit.';
-  }
-  return true;
-}
-
 function optionalString(answers: Answers, id: string, fallback: string): string {
   const value = answers[id];
   return value === undefined ? fallback : String(value).trim();
@@ -64,7 +59,7 @@ export function resolveSharedContext(answers: Answers): WebAppSharedContext {
     throw new Error('web-app: missing required answer "appName"');
   }
   const appName = String(rawAppName).trim();
-  const verdict = validateAppName(appName);
+  const verdict = toValidate(appNameSchema)(appName);
   if (verdict !== true) throw new Error(`web-app: invalid appName: ${verdict}`);
 
   return {
@@ -96,18 +91,20 @@ export const sharedQuestions: QuestionDefinition[] = [
     message: 'Application name',
     type: 'input',
     default: DEFAULT_APP_NAME,
-    validate: validateAppName,
+    validate: toValidate(appNameSchema),
   },
   {
     id: 'description',
     message: 'Short description',
     type: 'input',
     default: DEFAULT_DESCRIPTION,
+    validate: toValidate(descriptionSchema),
   },
   {
     id: 'author',
     message: 'Author (optional, used for package.json and an MIT LICENSE)',
     type: 'input',
     default: DEFAULT_AUTHOR,
+    validate: toValidate(authorSchema),
   },
 ];
