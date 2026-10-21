@@ -1,12 +1,6 @@
 import type { Answers, ProjectBlueprint, QuestionDefinition, StackfoldPlugin } from '../../core/types.js';
-import {
-  DEFAULT_APP_NAME,
-  DEFAULT_AUTHOR,
-  DEFAULT_DESCRIPTION,
-  TIER1_FILES,
-  resolveContext,
-  validateAppName,
-} from './templates.js';
+import { DEFAULT_APP_NAME, DEFAULT_AUTHOR, DEFAULT_DESCRIPTION, TIER1_FILES, resolveContext } from './templates.js';
+import { appNameSchema, authorSchema, descriptionSchema, toValidate } from '../../core/validation.js';
 
 /**
  * electron-ts plugin: a secure Electron + TypeScript Tier-1 app shell
@@ -51,19 +45,21 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
           message: 'Application name',
           type: 'input',
           default: DEFAULT_APP_NAME,
-          validate: validateAppName,
+          validate: toValidate(appNameSchema),
         },
         {
           id: 'description',
           message: 'Short description',
           type: 'input',
           default: DEFAULT_DESCRIPTION,
+          validate: toValidate(descriptionSchema),
         },
         {
           id: 'author',
           message: 'Author (optional, used for package.json and an MIT LICENSE)',
           type: 'input',
           default: DEFAULT_AUTHOR,
+          validate: toValidate(authorSchema),
         },
         {
           id: 'includeSettings',

@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`stackfold init`**: `description` and `author` now go through structural
+  validation (zod-based, same as `appName`) and reject control characters,
+  embedded newlines, and overlong input — previously these two fields
+  accepted anything. A narrow, security-motivated tightening (SEC-001b);
+  legitimate free text (apostrophes, accented names, emoji) is unaffected.
+
 ## [1.0.0] - 2026-10-18
 
 ### Added

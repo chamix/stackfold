@@ -1,4 +1,5 @@
-import type { AnswerValue, Answers } from '../../core/types.js';
+import type { Answers } from '../../core/types.js';
+import { MAX_PACKAGE_NAME_LENGTH, appNameSchema, toValidate } from '../../core/validation.js';
 
 /**
  * electron-ts Tier-1 shell: answer resolution + the data-driven template
@@ -14,9 +15,6 @@ import type { AnswerValue, Answers } from '../../core/types.js';
 export const DEFAULT_APP_NAME = 'my-electron-app';
 export const DEFAULT_DESCRIPTION = 'An Electron + TypeScript desktop app.';
 export const DEFAULT_AUTHOR = '';
-
-/** npm's package-name length limit. */
-const MAX_PACKAGE_NAME_LENGTH = 214;
 
 /**
  * Derived tokens every Tier-1 template renders from. Internal to this
@@ -78,15 +76,6 @@ export function toBridgeGlobal(packageName: string): string {
   return `${identifier}Api`;
 }
 
-export function validateAppName(value: AnswerValue): true | string {
-  const name = String(value).trim();
-  if (name === '') return 'App name must not be empty.';
-  if (toPackageName(name) === '') {
-    return 'App name must contain at least one letter or digit.';
-  }
-  return true;
-}
-
 function optionalString(answers: Answers, id: string, fallback: string): string {
   const value = answers[id];
   return value === undefined ? fallback : String(value).trim();
@@ -104,7 +93,7 @@ export function resolveContext(answers: Answers, now: Date): ResolvedContext {
     throw new Error('electron-ts: missing required answer "appName"');
   }
   const appName = String(rawAppName).trim();
-  const verdict = validateAppName(appName);
+  const verdict = toValidate(appNameSchema)(appName);
   if (verdict !== true) throw new Error(`electron-ts: invalid appName: ${verdict}`);
 
   const packageName = toPackageName(appName);
