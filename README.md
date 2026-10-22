@@ -34,13 +34,44 @@ src/
               plugin contract (electron-ts, web-app-spa,
               web-app-standalone-html)
   infra/      adapters: file system, git (execa), prompts (@inquirer),
-              plugin discovery (cosmiconfig)
+              plugin discovery (cosmiconfig), expression evaluation
+              (json-logic-js)
   cli/        composition root — commander wiring, entry point
 ```
 
 `core/` has zero dependencies on `infra/` or `plugins/`; it only depends
 on its own types. `cli/` is the only layer allowed to wire concrete
 adapters into the orchestrator.
+
+Four ports define the boundary between `core/` and `infra/`: `Prompter`,
+`FileWriter`, `ProcessRunner`, and `ExpressionEvaluator`. The last
+resolves an expression-shaped value (e.g. `{ "var": "appName" }`) against
+an answers context; its sole adapter, `infra/expressionEvaluator.ts`, is a
+thin wrapper over [json-logic-js](https://github.com/jwadhams/json-logic-js) —
+a restricted, non-Turing-complete rule format, never an `eval`.
+
+### Declarative scaffold authoring (internal, experimental)
+
+`core/authoring.ts` adds a second way to produce a `StackfoldPlugin`: a
+`ScaffoldDefinition` — plain JSON describing `questions`, an ordered list
+of `ActionStep`s, and optional lifecycle hooks (`preInit`, `postWrite`,
+`postInit`) — compiles via `compileScaffold()` into a plugin
+indistinguishable at runtime from a hand-written one.
+
+Built-in action types: `mkdir`, `writeFile`, `runCommand`, `npmInstall`,
+`gitInit` (`copyFile` was removed — it was identical to `writeFile` with
+no real copy semantics). File content in `writeFile` is templated with
+[Handlebars](https://github.com/handlebars-lang/handlebars.js). New
+action types can be added via `registerAction()` without touching the
+orchestrator.
+
+This is internal and experimental — none of the three plugins in
+`Status` use it yet; they remain hand-written via the
+`questions()`/`buildBlueprint()` contract, and there is no forced
+migration. The declarative authoring system is the source of truth going
+forward: `ProjectBlueprint` is just one possible outcome it produces.
+Readers who want the full rationale can look up ADR SK-ADR-002 in this
+project's governance docs (not included in this repository).
 
 ## Stack
 
@@ -49,6 +80,8 @@ adapters into the orchestrator.
 - [execa](https://github.com/sindresorhus/execa) — process execution
 - [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig) — plugin/config discovery
 - [zod](https://github.com/colinhacks/zod) — validation
+- [handlebars](https://github.com/handlebars-lang/handlebars.js) — file content templating in the declarative authoring system
+- [json-logic-js](https://github.com/jwadhams/json-logic-js) — expression evaluation behind the `ExpressionEvaluator` port
 - TypeScript **6.x** (deliberately not 7's native compiler yet —
   `typescript-eslint` support isn't there for it as of this writing)
 
