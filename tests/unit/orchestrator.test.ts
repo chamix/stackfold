@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HookError,
   InvalidAnswersError,
   InvalidBlueprintError,
   InvalidQuestionsError,
@@ -11,6 +12,8 @@ import {
 import type { FileWriter, ProcessRunner, Prompter } from '../../src/core/ports.js';
 import type {
   Answers,
+  HookName,
+  HookPorts,
   PostActionDefinition,
   ProjectBlueprint,
   QuestionDefinition,
@@ -26,7 +29,11 @@ type Call =
   | { step: 'buildBlueprint'; answers: Answers }
   | { step: 'ensureEmptyDir'; targetDir: string; options?: { force?: boolean; ignoreEntries?: readonly string[] } }
   | { step: 'writeFile'; path: string; content: string | Buffer }
-  | { step: 'run'; command: string; args: string[]; cwd: string | undefined };
+  | { step: 'run'; command: string; args: string[]; cwd: string | undefined }
+  | { step: 'hook'; name: HookName; index: number };
+
+/** A test's own hook body — invoked after the harness records the 'hook' call. */
+type HookBody = (ports: HookPorts) => void | Promise<void>;
 
 interface Harness {
   calls: Call[];
@@ -41,6 +48,15 @@ function harness(opts: {
   ensureEmptyDirError?: Error;
   failWriteOn?: string;
   failRunOn?: string;
+  /**
+   * Optional (ARCH-001). Omitted entirely — every case above this point in
+   * the file — the compiled plugin has no `hooks` field at all, exactly as
+   * every pre-ARCH-001 plugin, so none of this wrapping applies. When
+   * provided, each body is wrapped so the harness itself records a `'hook'`
+   * call (with the real `HookName` and its index in that moment's array)
+   * before invoking the test's own body with the real `ports`.
+   */
+  hooks?: Partial<Record<HookName, HookBody[]>>;
 } = {}): Harness {
   const calls: Call[] = [];
   const questions = opts.questions ?? [{ id: 'name', message: 'Name?', type: 'input' }];
@@ -51,9 +67,22 @@ function harness(opts: {
       postActions: [{ kind: 'git-init' }],
     }));
 
+  const hooks = opts.hooks
+    ? (Object.fromEntries(
+        (Object.entries(opts.hooks) as [HookName, HookBody[]][]).map(([name, bodies]) => [
+          name,
+          bodies.map((body, index) => async (ports: HookPorts) => {
+            calls.push({ step: 'hook', name, index });
+            await body(ports);
+          }),
+        ])
+      ) as NonNullable<StackfoldPlugin['hooks']>)
+    : undefined;
+
   const plugin: StackfoldPlugin = {
     id: 'fake',
     description: 'fake plugin',
+    ...(hooks ? { hooks } : {}),
     questions() {
       calls.push({ step: 'questions' });
       return questions;
@@ -442,5 +471,228 @@ describe('formatPostAction — the single human-readable form of a post-action',
 
     const ran = h.calls.flatMap((c) => (c.step === 'run' ? [[c.command, ...c.args].join(' ')] : []));
     expect(ran).toEqual(actions.map(formatPostAction));
+  });
+});
+
+describe('runPlugin — ARCH-001 hook invocation points (preInit/postWrite/postInit)', () => {
+  it('a plugin with no hooks field behaves byte-for-byte as before (no hook calls, same step sequence)', async () => {
+    const h = harness({
+      blueprint: {
+        files: [{ path: 'a.txt', content: 'A' }],
+        postActions: [{ kind: 'git-init' }],
+      },
+    });
+
+    const result = await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(steps(h.calls)).toEqual(['questions', 'ask', 'buildBlueprint', 'ensureEmptyDir', 'writeFile', 'run']);
+    expect(h.calls.some((c) => c.step === 'hook')).toBe(false);
+    expect(result).toEqual({ targetDir: TARGET, filesWritten: ['a.txt'], postActionsRun: [{ kind: 'git-init' }] });
+  });
+
+  it('runs preInit after answers are collected and before the blueprint is built', async () => {
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [] },
+      hooks: { preInit: [() => {}] },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(steps(h.calls)).toEqual(['questions', 'ask', 'hook', 'buildBlueprint', 'ensureEmptyDir', 'writeFile']);
+  });
+
+  it('runs postWrite after the last writeFile and before any post-action runs', async () => {
+    const h = harness({
+      blueprint: {
+        files: [{ path: 'a.txt', content: 'A' }],
+        postActions: [{ kind: 'git-init' }],
+      },
+      hooks: { postWrite: [() => {}] },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(steps(h.calls)).toEqual([
+      'questions',
+      'ask',
+      'buildBlueprint',
+      'ensureEmptyDir',
+      'writeFile',
+      'hook',
+      'run',
+    ]);
+  });
+
+  it('runs postInit after all post-actions have run', async () => {
+    const h = harness({
+      blueprint: { files: [], postActions: [{ kind: 'git-init' }] },
+      hooks: { postInit: [() => {}] },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(steps(h.calls)).toEqual(['questions', 'ask', 'buildBlueprint', 'ensureEmptyDir', 'run', 'hook']);
+  });
+
+  it('runs all three hook moments together, each at its own point, in order', async () => {
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [{ kind: 'git-init' }] },
+      hooks: {
+        preInit: [() => {}],
+        postWrite: [() => {}],
+        postInit: [() => {}],
+      },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(steps(h.calls)).toEqual([
+      'questions',
+      'ask',
+      'hook', // preInit
+      'buildBlueprint',
+      'ensureEmptyDir',
+      'writeFile',
+      'hook', // postWrite
+      'run',
+      'hook', // postInit
+    ]);
+    expect(h.calls.filter((c) => c.step === 'hook').map((c) => (c as { name: HookName }).name)).toEqual([
+      'preInit',
+      'postWrite',
+      'postInit',
+    ]);
+  });
+
+  it('runs multiple handlers for the same moment in array order', async () => {
+    const order: string[] = [];
+    const h = harness({
+      hooks: {
+        preInit: [
+          () => {
+            order.push('first');
+          },
+          () => {
+            order.push('second');
+          },
+        ],
+      },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(order).toEqual(['first', 'second']);
+    expect(h.calls.filter((c) => c.step === 'hook').map((c) => (c as { index: number }).index)).toEqual([0, 1]);
+  });
+
+  it('passes the real 3 ports (prompter, fileWriter, processRunner) to every hook handler', async () => {
+    let seenPorts: HookPorts | undefined;
+    const h = harness({
+      hooks: {
+        postInit: [
+          (ports) => {
+            seenPorts = ports;
+          },
+        ],
+      },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(seenPorts).toBe(h.ports);
+    expect(seenPorts).toEqual({
+      prompter: h.ports.prompter,
+      fileWriter: h.ports.fileWriter,
+      processRunner: h.ports.processRunner,
+    });
+  });
+
+  it('wraps a thrown preInit hook in HookError, naming the hook and the handler index', async () => {
+    const boom = new Error('preInit exploded');
+    const h = harness({
+      hooks: {
+        preInit: [
+          () => {
+            throw boom;
+          },
+        ],
+      },
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    const hookErr = err as HookError;
+    expect(hookErr.hookName).toBe('preInit');
+    expect(hookErr.handlerIndex).toBe(0);
+    expect(hookErr.cause).toBe(boom);
+    expect(steps(h.calls)).toEqual(['questions', 'ask', 'hook']);
+    expect(steps(h.calls)).not.toContain('buildBlueprint');
+  });
+
+  it('wraps a thrown postWrite hook in HookError and stops before running post-actions', async () => {
+    const boom = new Error('postWrite exploded');
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [{ kind: 'git-init' }] },
+      hooks: {
+        postWrite: [
+          () => {
+            throw boom;
+          },
+        ],
+      },
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    const hookErr = err as HookError;
+    expect(hookErr.hookName).toBe('postWrite');
+    expect(hookErr.handlerIndex).toBe(0);
+    expect(hookErr.cause).toBe(boom);
+    expect(steps(h.calls)).not.toContain('run');
+  });
+
+  it('wraps a thrown postInit hook in HookError, after post-actions already ran', async () => {
+    const boom = new Error('postInit exploded');
+    const h = harness({
+      blueprint: { files: [], postActions: [{ kind: 'git-init' }] },
+      hooks: {
+        postInit: [
+          () => {
+            throw boom;
+          },
+        ],
+      },
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    const hookErr = err as HookError;
+    expect(hookErr.hookName).toBe('postInit');
+    expect(hookErr.handlerIndex).toBe(0);
+    expect(hookErr.cause).toBe(boom);
+    expect(h.calls.filter((c) => c.step === 'run')).toHaveLength(1);
+  });
+
+  it('reports the index of the specific failing handler when a later handler in the array throws', async () => {
+    const boom = new Error('second handler exploded');
+    const h = harness({
+      hooks: {
+        preInit: [
+          () => {},
+          () => {
+            throw boom;
+          },
+        ],
+      },
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    expect((err as HookError).handlerIndex).toBe(1);
+    expect(h.calls.filter((c) => c.step === 'hook')).toHaveLength(2);
   });
 });

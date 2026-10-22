@@ -22,6 +22,8 @@ import type { FileWriter, ProcessRunner, Prompter } from './ports.js';
 import type {
   AnswerValue,
   Answers,
+  HookName,
+  HookPorts,
   PostActionDefinition,
   ProjectBlueprint,
   QuestionDefinition,
@@ -99,6 +101,28 @@ export class ScaffoldWriteError extends Error {
   }
 }
 
+/**
+ * A plugin's hook handler (ARCH-001 Step 1 item 3) threw. Deliberately not
+ * `PostActionError` — a hook is arbitrary code with an entirely different
+ * signature (`HookHandler`, not `PostActionDefinition`), not a declarative
+ * Command; conflating the two error categories would lose that distinction
+ * in the error report. `hookName` identifies which of the 3 lifecycle
+ * moments (preInit/postWrite/postInit) was running; `handlerIndex` is the
+ * position of the specific handler within that moment's array (a plugin may
+ * register more than one handler per moment, same as `blueprint.postActions`
+ * is itself an ordered list).
+ */
+export class HookError extends Error {
+  constructor(
+    public readonly hookName: HookName,
+    public readonly handlerIndex: number,
+    cause: unknown
+  ) {
+    super(`Hook "${hookName}" handler #${handlerIndex} failed: ${errorMessage(cause)}`, { cause });
+    this.name = 'HookError';
+  }
+}
+
 /** §3.2 (best-effort) — all files were written but a follow-up action failed. */
 export class PostActionError extends Error {
   constructor(
@@ -134,12 +158,20 @@ export async function runPlugin(
   const rawAnswers = await ports.prompter.ask(questions);
   const answers = resolveAnswers(questions, rawAnswers);
 
+  // `HookPorts` is structurally identical to `OrchestratorPorts` — passed
+  // straight through, no new object needed (Invariant A: the hook gets
+  // exactly these 3 ports, nothing more).
+  await runHooks('preInit', plugin.hooks, ports);
+
   const blueprint = plugin.buildBlueprint(answers);
   const plannedFiles = planFiles(plugin.id, targetDir, blueprint);
 
   await ports.fileWriter.ensureEmptyDir(targetDir, options);
 
   const filesWritten = await writeFiles(targetDir, plannedFiles, ports.fileWriter);
+
+  await runHooks('postWrite', plugin.hooks, ports);
+
   const postActionsRun = await runPostActions(
     targetDir,
     filesWritten,
@@ -147,7 +179,36 @@ export async function runPlugin(
     ports.processRunner
   );
 
+  await runHooks('postInit', plugin.hooks, ports);
+
   return { targetDir, filesWritten, postActionsRun };
+}
+
+// ---------------------------------------------------------------------------
+// Hook invocation points (ARCH-001 Step 1 item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs every handler registered for `hookName`, in array order. A no-op
+ * when `hooks` is absent or has no handlers for this moment — the path every
+ * pre-ARCH-001 plugin takes, unchanged. Each handler call is individually
+ * wrapped so a failure identifies exactly which handler (by index) failed.
+ */
+async function runHooks(
+  hookName: HookName,
+  hooks: StackfoldPlugin['hooks'],
+  ports: HookPorts
+): Promise<void> {
+  const handlers = hooks?.[hookName];
+  if (!handlers || handlers.length === 0) return;
+
+  for (const [index, handler] of handlers.entries()) {
+    try {
+      await handler(ports);
+    } catch (cause) {
+      throw new HookError(hookName, index, cause);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
