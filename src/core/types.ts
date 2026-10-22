@@ -7,7 +7,13 @@
  * (`buildBlueprint()`); it never performs I/O itself — the orchestrator
  * does the asking, writing, and command execution through the ports in
  * `core/ports.ts` (functional_domain.md §3.4).
+ *
+ * `HookName`/`HookPorts`/`HookHandler` and `StackfoldPlugin.hooks` below are
+ * ARCH-001's additive extension (.agents/specs/arch-001-scaffold-authoring.md
+ * — Step 1 item 2, Invariant D): a brand-new, optional field. The 3 existing
+ * plugins, which never declare it, are byte-for-byte unaffected.
  */
+import type { FileWriter, ProcessRunner, Prompter } from './ports.js';
 
 export type AnswerValue = string | boolean | number;
 export type Answers = Record<string, AnswerValue>;
@@ -63,6 +69,32 @@ export interface PluginHelp {
   details?: string;
 }
 
+/**
+ * The three moments in `runPlugin()`'s execution lifecycle (ARCH-001
+ * Invariant E) a plugin may hook into — not part of the pure blueprint, the
+ * only impure category of action by definition:
+ *   - `preInit`   — after answers are collected, before the blueprint is built.
+ *   - `postWrite` — after files are written, before post-actions run.
+ *   - `postInit`  — after post-actions have run.
+ */
+export type HookName = 'preInit' | 'postWrite' | 'postInit';
+
+/**
+ * The only I/O a hook ever receives (ARCH-001 Invariant A, non-negotiable):
+ * the same three ports already injected into the orchestrator — never
+ * ambient access to the real filesystem/process/stdin. Mirrors
+ * `OrchestratorPorts` (`core/orchestrator.ts`) field-for-field; kept as a
+ * separate type here since `core/types.ts` is the pure-data module and
+ * `OrchestratorPorts` belongs to the orchestrator.
+ */
+export interface HookPorts {
+  prompter: Prompter;
+  fileWriter: FileWriter;
+  processRunner: ProcessRunner;
+}
+
+export type HookHandler = (ports: HookPorts) => void | Promise<void>;
+
 export interface StackfoldPlugin {
   readonly id: string;
   readonly description: string;
@@ -73,6 +105,15 @@ export interface StackfoldPlugin {
    * `PluginHelp`'s own doc comment.
    */
   readonly help?: PluginHelp;
+
+  /**
+   * Optional, additive (ARCH-001 Invariant D): handlers to run at each of
+   * the 3 lifecycle moments, in array order. A plugin that omits this
+   * field — every plugin before ARCH-001 — runs exactly as it did before;
+   * the orchestrator treats an absent `hooks` field, or an absent slot
+   * within it, as a no-op.
+   */
+  readonly hooks?: Partial<Record<HookName, HookHandler[]>>;
 
   /** Pure — declares what to ask. The orchestrator does the asking. */
   questions(): QuestionDefinition[];

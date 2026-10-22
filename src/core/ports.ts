@@ -55,3 +55,15 @@ export interface PluginRegistry {
   resolve(id: string): StackfoldPlugin | undefined;
   list(): StackfoldPlugin[];
 }
+
+/**
+ * Fourth port (ARCH-001, Step 1 item 1): resolves an "expression-shaped"
+ * value against a context — today always `Answers` (`core/authoring.ts`).
+ * `infra/expressionEvaluator.ts` is the sole adapter, a thin wrapper over
+ * `json-logic-js` — a restricted, non-Turing-complete rule format, never an
+ * `eval`. No escape hatch (custom operator, string execution, etc.) is ever
+ * added on top of it.
+ */
+export interface ExpressionEvaluator {
+  evaluate(expr: unknown, context: Record<string, unknown>): unknown;
+}
