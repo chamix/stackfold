@@ -29,6 +29,8 @@ type Call =
   | { step: 'buildBlueprint'; answers: Answers }
   | { step: 'ensureEmptyDir'; targetDir: string; options?: { force?: boolean; ignoreEntries?: readonly string[] } }
   | { step: 'writeFile'; path: string; content: string | Buffer }
+  | { step: 'readFile'; path: string }
+  | { step: 'overwriteFile'; path: string; content: string }
   | { step: 'run'; command: string; args: string[]; cwd: string | undefined }
   | { step: 'hook'; name: HookName; index: number };
 
@@ -100,6 +102,12 @@ function harness(opts: {
     },
   };
 
+  // Task 034: in-memory store backing the fake's new readFile/overwriteFile
+  // methods, consistent with this harness's existing Map-free-but-call-log
+  // style — a real `Map` here since, unlike every other port method, these
+  // two need to actually remember content across calls.
+  const fileStore = new Map<string, string>();
+
   const fileWriter: FileWriter = {
     async ensureEmptyDir(targetDir, options) {
       calls.push({ step: 'ensureEmptyDir', targetDir, options });
@@ -110,6 +118,14 @@ function harness(opts: {
       if (opts.failWriteOn && path.endsWith(opts.failWriteOn)) {
         throw new Error(`disk full writing ${path}`);
       }
+    },
+    async readFile(path) {
+      calls.push({ step: 'readFile', path });
+      return fileStore.get(path);
+    },
+    async overwriteFile(path, content) {
+      calls.push({ step: 'overwriteFile', path, content });
+      fileStore.set(path, content);
     },
   };
 
@@ -726,5 +742,70 @@ describe('runPlugin — ARCH-001 hook invocation points (preInit/postWrite/postI
     expect(err).toBeInstanceOf(HookError);
     expect((err as HookError).handlerIndex).toBe(1);
     expect(h.calls.filter((c) => c.step === 'hook')).toHaveLength(2);
+  });
+
+  describe('the fake FileWriter\'s new readFile/overwriteFile methods (Task 034)', () => {
+    it('readFile resolves undefined for a path nothing has written yet', async () => {
+      let seen: string | undefined;
+      const h = harness({
+        hooks: {
+          preInit: [
+            async (ports) => {
+              seen = await ports.fileWriter.readFile('nope.txt');
+            },
+          ],
+        },
+      });
+
+      await runPlugin(h.plugin, TARGET, h.ports);
+
+      expect(seen).toBeUndefined();
+      expect(h.calls).toContainEqual({ step: 'readFile', path: 'nope.txt' });
+    });
+
+    it('overwriteFile stores content that a later readFile call (even in a later hook moment) can see', async () => {
+      let seenAfterOverwrite: string | undefined;
+      const h = harness({
+        blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [] },
+        hooks: {
+          preInit: [
+            async (ports) => {
+              await ports.fileWriter.overwriteFile('target.ts', 'patched content');
+            },
+          ],
+          postWrite: [
+            async (ports) => {
+              seenAfterOverwrite = await ports.fileWriter.readFile('target.ts');
+            },
+          ],
+        },
+      });
+
+      await runPlugin(h.plugin, TARGET, h.ports);
+
+      expect(seenAfterOverwrite).toBe('patched content');
+      expect(h.calls).toContainEqual({ step: 'overwriteFile', path: 'target.ts', content: 'patched content' });
+    });
+
+    it("overwriteFile does not disturb writeFile's own exclusive semantics — both methods remain independent", async () => {
+      const h = harness({
+        blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [] },
+        hooks: {
+          postInit: [
+            async (ports) => {
+              await ports.fileWriter.overwriteFile('a.txt', 'overwritten via the new method');
+            },
+          ],
+        },
+      });
+
+      await runPlugin(h.plugin, TARGET, h.ports);
+
+      // writeFile was still called exactly once for 'a.txt' (its own path
+      // space in the fake), unaffected by overwriteFile targeting the same
+      // string key under its own, separate method.
+      expect(h.calls.filter((c) => c.step === 'writeFile')).toHaveLength(1);
+      expect(await h.ports.fileWriter.readFile('a.txt')).toBe('overwritten via the new method');
+    });
   });
 });

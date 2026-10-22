@@ -301,6 +301,19 @@ const writeFileSchema = z.object({
   path: z.string().trim().min(1, 'writeFile requires a non-empty "path"'),
   content: z.string(),
   strategy: mergeStrategySchema.optional(),
+  /**
+   * Names of top-level context (answers) keys whose *string* value must be
+   * JSON-string-escaped before `content` is Handlebars-rendered (Task 034
+   * review follow-up, review_report.md Blocking item 1) — for a scaffold
+   * author whose `content` places a free-text answer inside a JSON
+   * string-literal position (e.g. a generated `scaffold.json`). Resolved by
+   * `escapeForJsonContext()` below: plain TS pre-processing of the
+   * Handlebars context object, never a Handlebars helper or a JSON Logic
+   * operator (this module's header comment) — `content`'s own
+   * interpolation mechanism is untouched; only the values it sees are
+   * pre-escaped. Omitted (or empty) reproduces today's behavior exactly.
+   */
+  jsonEscapeKeys: z.array(z.string()).optional(),
 });
 
 const runCommandSchema = z.object({
@@ -315,6 +328,26 @@ function compileTemplate(content: string, ctx: Record<string, unknown>): string 
   // `noEscape: true` — see this module's header comment.
   const template = Handlebars.compile(content, { noEscape: true, strict: false });
   return template(ctx);
+}
+
+/**
+ * Shallow copy of `ctx` with each named key's *string* value replaced by
+ * its JSON-string-escaped inner content — `JSON.stringify(value).slice(1,
+ * -1)`, the escaped characters only, assuming the template itself already
+ * supplies the surrounding quotes (true of every current call site). Keys
+ * absent from `ctx`, and non-string values, pass through unchanged. Plain
+ * TS, not a Handlebars helper — see `writeFileSchema`'s `jsonEscapeKeys`
+ * doc comment for why.
+ */
+function escapeForJsonContext(ctx: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const escaped: Record<string, unknown> = { ...ctx };
+  for (const key of keys) {
+    const value = escaped[key];
+    if (typeof value === 'string') {
+      escaped[key] = JSON.stringify(value).slice(1, -1);
+    }
+  }
+  return escaped;
 }
 
 function trimTrailingSlashes(path: string): string {
@@ -342,10 +375,14 @@ registerAction('writeFile', {
   // never expression-resolved — so it's compiled as a Handlebars template
   // against real `answers` without ever becoming an answers-controlled
   // template itself. See this module's header comment and `resolveParams`.
-  literalKeys: ['content'],
+  // `jsonEscapeKeys` joins it for the same reason: it names *which* context
+  // keys get escaped, an author-chosen list, never an answers-controlled
+  // value (see `writeFileSchema`'s own doc comment).
+  literalKeys: ['content', 'jsonEscapeKeys'],
   resolve: (params, ctx): FileContribution => {
-    const { path, content, strategy } = params as z.infer<typeof writeFileSchema>;
-    return { path, content: compileTemplate(content, ctx), ...(strategy ? { strategy } : {}) };
+    const { path, content, strategy, jsonEscapeKeys } = params as z.infer<typeof writeFileSchema>;
+    const renderCtx = jsonEscapeKeys && jsonEscapeKeys.length > 0 ? escapeForJsonContext(ctx, jsonEscapeKeys) : ctx;
+    return { path, content: compileTemplate(content, renderCtx), ...(strategy ? { strategy } : {}) };
   },
 });
 
@@ -368,4 +405,92 @@ registerAction('gitInit', {
   tag: 'process',
   schema: noParamsSchema,
   resolve: (): PostActionDefinition => ({ kind: 'git-init' }),
+});
+
+// ---------------------------------------------------------------------------
+// patchFile (Task 034 — .agents/specs/plugin-builder-scaffold-authoring.md,
+// "New vocabulary: patchFile"). The only built-in "hook" action today, and a
+// general-purpose, reusable one (D6): edits an existing file at a fixed
+// anchor line, idempotently. Exists because registering a freshly generated
+// plugin into stackfold's own `src/cli/index.ts` (`plugin-builder`) needs to
+// *patch an existing file already known to exist* — something no `compose`
+// action may ever do (Invariant A: compose/writeFile stays inside
+// `targetDir` and never overwrites; patchFile is deliberately a hook, the
+// one existing trusted escape valve, and relies on the new
+// `FileWriter.readFile()`/`overwriteFile()` pair for exactly that).
+//
+// `params.path` is resolved relative to `process.cwd()` by the `FileWriter`
+// implementation (see `infra/fs.ts`'s `resolve()`) — NOT subject to
+// `targetDir` containment, by design (grounding: hooks already run with the
+// same unrestricted ports the orchestrator itself has). `core/` still never
+// imports node:path/node:fs directly (Inward Dependency Rule): `path` is
+// handed to the port as-is.
+//
+// `literalKeys: ['anchor', 'path']`: `anchor` must always stay the scaffold
+// author's own literal, hand-written marker text — never a value an
+// expression could redirect — mirroring `writeFile`'s own `content`
+// protection (B1) for the same reason (a field whose exact text controls
+// *where* a mutation lands must never be computed from free-text answers).
+// `path` joins it for the same reason (review follow-up, Should-fix #4):
+// unlike `writeFile`'s `path`, contained to `targetDir` via
+// `planFiles()`/`checkRelativePath()`, `patchFile` runs as a hook with no
+// such containment at all (Invariant A, intentional and unchanged) — so an
+// answers-derived `path` would be an uncontained, answer-controlled
+// overwrite target with zero validation. `path` is, in practice, always the
+// scaffold author's own literal string (a real file never computed from
+// end-user free text), so protecting it costs nothing. `insert` is NOT in
+// `literalKeys`: it legitimately needs to be computed from `answers` (e.g.
+// a generated plugin's own id, via JSON Logic's `cat`/`var`), exactly the
+// way `writeFile`'s own non-literal params already support — the existing
+// generic `resolveParams()`/`resolveValue()` pipeline below, not a second
+// resolution mechanism invented for this one action.
+// ---------------------------------------------------------------------------
+
+const patchFileSchema = z.object({
+  path: z.string().trim().min(1, 'patchFile requires a non-empty "path"'),
+  anchor: z.string().min(1, 'patchFile requires a non-empty "anchor"'),
+  insert: z.string(),
+  position: z.enum(['before', 'after']),
+});
+
+/**
+ * Inserts `insert` immediately before/after the line containing `anchor`.
+ * Pure string surgery — no node:fs here (Inward Dependency Rule); the I/O
+ * lives entirely in the `handler` below, via the injected `FileWriter`.
+ */
+function insertAtAnchor(content: string, anchor: string, insert: string, position: 'before' | 'after'): string {
+  const anchorIndex = content.indexOf(anchor);
+  if (anchorIndex === -1) {
+    throw new Error(`patchFile: anchor ${JSON.stringify(anchor)} not found`);
+  }
+
+  if (position === 'before') {
+    const lineStart = content.lastIndexOf('\n', anchorIndex - 1) + 1;
+    return content.slice(0, lineStart) + insert + content.slice(lineStart);
+  }
+
+  const nextNewline = content.indexOf('\n', anchorIndex);
+  const insertAt = nextNewline === -1 ? content.length : nextNewline + 1;
+  return content.slice(0, insertAt) + insert + content.slice(insertAt);
+}
+
+registerAction('patchFile', {
+  tag: 'hook',
+  schema: patchFileSchema,
+  literalKeys: ['anchor', 'path'],
+  handler: async (params, ports): Promise<void> => {
+    const { path, anchor, insert, position } = params as z.infer<typeof patchFileSchema>;
+
+    const current = await ports.fileWriter.readFile(path);
+    if (current === undefined) {
+      throw new Error(`patchFile: "${path}" does not exist`);
+    }
+
+    // Idempotent: re-running the same registration (or resuming after a
+    // previous partial run) never duplicates `insert`.
+    if (current.includes(insert)) return;
+
+    const patched = insertAtAnchor(current, anchor, insert, position);
+    await ports.fileWriter.overwriteFile(path, patched);
+  },
 });
