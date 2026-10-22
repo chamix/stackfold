@@ -45,6 +45,24 @@ export interface FileWriter {
     options?: { force?: boolean; ignoreEntries?: readonly string[] }
   ): Promise<void>;
   writeFile(absolutePath: string, content: string | Buffer): Promise<void>;
+
+  /**
+   * New (Task 034 — .agents/specs/plugin-builder-scaffold-authoring.md).
+   * Returns the file's content as text, or `undefined` if it does not
+   * exist. Used by hook-level actions (e.g. `patchFile`) that must inspect
+   * a file already on disk before deciding how to edit it — never by the
+   * `compose`/`writeFile` path.
+   */
+  readFile(absolutePath: string): Promise<string | undefined>;
+
+  /**
+   * New (Task 034). Unlike `writeFile`, overwrites an existing file —
+   * deliberately the one place this port allows that, reserved for
+   * hook-level actions (e.g. `patchFile`) editing a file already known to
+   * exist. `writeFile`'s own exclusive "wx" semantics (never silently
+   * overwrite) are untouched by this addition.
+   */
+  overwriteFile(absolutePath: string, content: string): Promise<void>;
 }
 
 export interface ProcessRunner {

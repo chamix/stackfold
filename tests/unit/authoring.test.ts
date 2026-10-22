@@ -33,12 +33,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function fakePorts(): HookPorts {
+/**
+ * `files` seeds the fake `FileWriter`'s in-memory store (Task 034's
+ * `readFile`/`overwriteFile`, consistent with `orchestrator.test.ts`'s own
+ * Map-backed fake style). Omitting it — every call above this point in the
+ * file — reproduces the exact previous behavior (`readFile` always
+ * resolving `undefined`, `overwriteFile` never called), since no existing
+ * test exercises either new method.
+ */
+function fakePorts(files: Record<string, string> = {}): HookPorts {
+  const store = new Map(Object.entries(files));
   return {
     prompter: { async ask() { return {}; } },
     fileWriter: {
       async ensureEmptyDir() {},
       async writeFile() {},
+      async readFile(path: string) {
+        return store.get(path);
+      },
+      async overwriteFile(path: string, content: string) {
+        store.set(path, content);
+      },
     },
     processRunner: { async run() {} },
   };
@@ -457,6 +472,56 @@ describe('built-in action: writeFile (compose)', () => {
     const kind = resolveAction('writeFile');
     expect(() => kind!.schema.parse({ path: 'a.txt', content: 42 })).toThrow();
   });
+
+  // Blocking item 1 (review_report.md, Task 034 follow-up): `jsonEscapeKeys`
+  // JSON-string-escapes the named context values before Handlebars renders
+  // `content` — for a `content` template that places a free-text answer
+  // inside a JSON string-literal position.
+  describe('jsonEscapeKeys (review follow-up, Blocking item 1)', () => {
+    it('JSON-escapes only the named context keys before rendering, leaving others untouched', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'scaffold.json',
+        content: '{ "description": "{{description}}", "author": "{{author}}" }',
+        jsonEscapeKeys: ['description'],
+      });
+
+      const result = kind.resolve(parsed, { description: 'Does "cool" things.', author: 'A & B' });
+
+      expect(result).toEqual({
+        path: 'scaffold.json',
+        content: '{ "description": "Does \\"cool\\" things.", "author": "A & B" }',
+      });
+      expect(() => JSON.parse(result.content.toString())).not.toThrow();
+    });
+
+    it('omitting jsonEscapeKeys (or an empty array) reproduces today\'s behavior exactly — no escaping', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({ path: 'a.txt', content: 'Hello {{name}}!' });
+
+      expect(kind.resolve(parsed, { name: 'World "Quoted"' })).toEqual({
+        path: 'a.txt',
+        content: 'Hello World "Quoted"!',
+      });
+    });
+
+    it('never expression-resolves "jsonEscapeKeys" — it is always the author\'s own literal list', () => {
+      const def = definition({
+        id: 'write-file-json-escape-literal',
+        steps: [
+          step('writeFile', {
+            path: 'out.json',
+            content: '{ "x": "{{x}}" }',
+            jsonEscapeKeys: { var: 'untrustedKeys' },
+          }),
+        ],
+      });
+      const evaluator = new FakeEvaluator();
+
+      expect(() => compileScaffold(def, evaluator).buildBlueprint({ x: 'a', untrustedKeys: ['x'] })).toThrow();
+      expect(evaluator.calls).toEqual([]);
+    });
+  });
 });
 
 describe('built-in action: runCommand (process)', () => {
@@ -501,5 +566,148 @@ describe('built-in action: gitInit (process) — sugar over the git-init kind', 
   it('rejects malformed params (unexpected key) via zod', () => {
     const kind = resolveAction('gitInit');
     expect(() => kind!.schema.parse({ unexpected: true })).toThrow();
+  });
+});
+
+describe('built-in action: patchFile (hook) — Task 034', () => {
+  const PATH = 'src/cli/index.ts';
+  const ANCHOR = '// stackfold-plugin-registry:end';
+
+  function patchFileKind(): Extract<ActionKind, { tag: 'hook' }> {
+    return resolveAction('patchFile') as Extract<ActionKind, { tag: 'hook' }>;
+  }
+
+  it('is registered as a "hook" action with literalKeys: ["anchor", "path"]', () => {
+    const kind = patchFileKind();
+    expect(kind.tag).toBe('hook');
+    expect(kind.literalKeys).toEqual(['anchor', 'path']);
+  });
+
+  it('inserts "insert" immediately before the anchor line', async () => {
+    const content = `a\n${ANCHOR}\nb\n`;
+    const ports = fakePorts({ [PATH]: content });
+    const kind = patchFileKind();
+    const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
+
+    await kind.handler(parsed, ports);
+
+    expect(await ports.fileWriter.readFile(PATH)).toBe(`a\nnew\n${ANCHOR}\nb\n`);
+  });
+
+  it('inserts "insert" immediately after the anchor line', async () => {
+    const content = `a\n${ANCHOR}\nb\n`;
+    const ports = fakePorts({ [PATH]: content });
+    const kind = patchFileKind();
+    const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'after' });
+
+    await kind.handler(parsed, ports);
+
+    expect(await ports.fileWriter.readFile(PATH)).toBe(`a\n${ANCHOR}\nnew\nb\n`);
+  });
+
+  it('is idempotent: a second run with the same "insert" text already present is a no-op', async () => {
+    const already = `a\nnew\n${ANCHOR}\nb\n`;
+    const ports = fakePorts({ [PATH]: already });
+    const kind = patchFileKind();
+    const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
+
+    await kind.handler(parsed, ports);
+
+    expect(await ports.fileWriter.readFile(PATH)).toBe(already);
+  });
+
+  it('throws loudly, never guessing an insertion point, when the anchor is missing from the file', async () => {
+    const ports = fakePorts({ [PATH]: 'no anchor here\n' });
+    const kind = patchFileKind();
+    const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
+
+    await expect(kind.handler(parsed, ports)).rejects.toThrow(/anchor/i);
+  });
+
+  it('throws loudly when the target file does not exist', async () => {
+    const ports = fakePorts(); // no files seeded
+    const kind = patchFileKind();
+    const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
+
+    await expect(kind.handler(parsed, ports)).rejects.toThrow(/does not exist/i);
+  });
+
+  it('rejects malformed params (missing position) via zod', () => {
+    const kind = patchFileKind();
+    expect(() => kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'x' })).toThrow();
+  });
+
+  describe('expression resolution through compileScaffold()', () => {
+    it('resolves "insert" against answers — composing a plugin-id-derived registration line', async () => {
+      const content = `a\n${ANCHOR}\nb\n`;
+      const ports = fakePorts({ [PATH]: content });
+      const def = definition({
+        id: 'patchfile-insert-resolved',
+        hooks: {
+          postInit: [step('patchFile', { path: PATH, anchor: ANCHOR, insert: { var: 'registrationLine' }, position: 'before' })],
+        },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      await plugin.hooks!.postInit![0]!(ports, { registrationLine: 'myPlugin,\n' });
+
+      expect(await ports.fileWriter.readFile(PATH)).toBe(`a\nmyPlugin,\n${ANCHOR}\nb\n`);
+      expect(evaluator.calls).toContainEqual({ expr: { var: 'registrationLine' }, context: { registrationLine: 'myPlugin,\n' } });
+    });
+
+    it('never expression-resolves "anchor" — an expression-shaped anchor is rejected by zod, not silently resolved', async () => {
+      const def = definition({
+        id: 'patchfile-anchor-literal',
+        hooks: {
+          postInit: [
+            step('patchFile', { path: PATH, anchor: { var: 'untrustedAnchor' }, insert: 'x', position: 'before' }),
+          ],
+        },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      await expect(plugin.hooks!.postInit![0]!(fakePorts(), { untrustedAnchor: ANCHOR })).rejects.toThrow();
+      // The evaluator must never even be asked to resolve "anchor".
+      expect(evaluator.calls).toEqual([]);
+    });
+
+    it('"path" stays literal — a plain string param is passed through untouched (not an expression evaluator call)', async () => {
+      const content = `a\n${ANCHOR}\nb\n`;
+      const ports = fakePorts({ [PATH]: content });
+      const def = definition({
+        id: 'patchfile-path-literal',
+        hooks: { postInit: [step('patchFile', { path: PATH, anchor: ANCHOR, insert: 'x\n', position: 'before' })] },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      await plugin.hooks!.postInit![0]!(ports, {});
+
+      expect(await ports.fileWriter.readFile(PATH)).toBe(`a\nx\n${ANCHOR}\nb\n`);
+      expect(evaluator.calls).toEqual([]);
+    });
+
+    // Should-fix #4 (review_report.md): `path` runs uncontained (Invariant
+    // A — `patchFile` is a hook, no `targetDir` containment at all), so an
+    // answers-derived `path` must never be possible, mirroring `anchor`'s
+    // own protection immediately above.
+    it('never expression-resolves "path" — an expression-shaped path is rejected by zod, not silently resolved', async () => {
+      const def = definition({
+        id: 'patchfile-path-literal-rejected',
+        hooks: {
+          postInit: [
+            step('patchFile', { path: { var: 'untrustedPath' }, anchor: ANCHOR, insert: 'x', position: 'before' }),
+          ],
+        },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      await expect(plugin.hooks!.postInit![0]!(fakePorts(), { untrustedPath: PATH })).rejects.toThrow();
+      // The evaluator must never even be asked to resolve "path".
+      expect(evaluator.calls).toEqual([]);
+    });
   });
 });
