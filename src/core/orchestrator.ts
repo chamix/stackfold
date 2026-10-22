@@ -161,7 +161,7 @@ export async function runPlugin(
   // `HookPorts` is structurally identical to `OrchestratorPorts` — passed
   // straight through, no new object needed (Invariant A: the hook gets
   // exactly these 3 ports, nothing more).
-  await runHooks('preInit', plugin.hooks, ports);
+  await runHooks('preInit', plugin.hooks, ports, answers);
 
   const blueprint = plugin.buildBlueprint(answers);
   const plannedFiles = planFiles(plugin.id, targetDir, blueprint);
@@ -170,7 +170,7 @@ export async function runPlugin(
 
   const filesWritten = await writeFiles(targetDir, plannedFiles, ports.fileWriter);
 
-  await runHooks('postWrite', plugin.hooks, ports);
+  await runHooks('postWrite', plugin.hooks, ports, answers);
 
   const postActionsRun = await runPostActions(
     targetDir,
@@ -179,7 +179,7 @@ export async function runPlugin(
     ports.processRunner
   );
 
-  await runHooks('postInit', plugin.hooks, ports);
+  await runHooks('postInit', plugin.hooks, ports, answers);
 
   return { targetDir, filesWritten, postActionsRun };
 }
@@ -193,18 +193,24 @@ export async function runPlugin(
  * when `hooks` is absent or has no handlers for this moment — the path every
  * pre-ARCH-001 plugin takes, unchanged. Each handler call is individually
  * wrapped so a failure identifies exactly which handler (by index) failed.
+ *
+ * `answers` is the same `Answers` reference `runPlugin()` resolved for this
+ * invocation, handed to every handler at all three lifecycle moments — never
+ * recomputed per call, so a `preInit` handler sees the real answers just as
+ * `postWrite`/`postInit` already did.
  */
 async function runHooks(
   hookName: HookName,
   hooks: StackfoldPlugin['hooks'],
-  ports: HookPorts
+  ports: HookPorts,
+  answers: Answers
 ): Promise<void> {
   const handlers = hooks?.[hookName];
   if (!handlers || handlers.length === 0) return;
 
   for (const [index, handler] of handlers.entries()) {
     try {
-      await handler(ports);
+      await handler(ports, answers);
     } catch (cause) {
       throw new HookError(hookName, index, cause);
     }
