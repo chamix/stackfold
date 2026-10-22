@@ -83,10 +83,9 @@ describe('registerAction / resolveAction — the generic vocabulary registry', (
     expect(resolveAction('test-overwrite-me')).toBe(second);
   });
 
-  it('the 6 built-ins are registered by default (module load), no setup required', () => {
+  it('the 5 built-ins are registered by default (module load), no setup required', () => {
     expect(resolveAction('mkdir')?.tag).toBe('compose');
     expect(resolveAction('writeFile')?.tag).toBe('compose');
-    expect(resolveAction('copyFile')?.tag).toBe('compose');
     expect(resolveAction('runCommand')?.tag).toBe('process');
     expect(resolveAction('npmInstall')?.tag).toBe('process');
     expect(resolveAction('gitInit')?.tag).toBe('process');
@@ -324,7 +323,7 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     plugin.buildBlueprint({ greeting: 'hello world' });
 
     expect(plugin.hooks?.postInit).toHaveLength(1);
-    await plugin.hooks!.postInit![0]!(fakePorts());
+    await plugin.hooks!.postInit![0]!(fakePorts(), { greeting: 'hello world' });
 
     expect(received).toEqual(['hello world']);
   });
@@ -344,12 +343,12 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     plugin.buildBlueprint({});
 
     const ports = fakePorts();
-    await plugin.hooks!.postWrite![0]!(ports);
+    await plugin.hooks!.postWrite![0]!(ports, {});
 
     expect(seenPorts).toBe(ports);
   });
 
-  it('a preInit hook step resolves against {} when buildBlueprint() has not run yet for this invocation (documented Cycle-1 limitation)', async () => {
+  it('a preInit hook step resolves its expression against the real answers passed to the compiled handler, even though buildBlueprint() has not run yet for this invocation', async () => {
     let seenMessage: unknown;
     registerAction('test-record-raw', {
       tag: 'hook',
@@ -366,10 +365,13 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     const plugin = compileScaffold(def, new FakeEvaluator());
 
     // Deliberately NOT calling buildBlueprint() first — mirrors the real
-    // orchestrator's order, where preInit fires before buildBlueprint().
-    await plugin.hooks!.preInit![0]!(fakePorts());
+    // orchestrator's order, where preInit fires before buildBlueprint(). The
+    // real `answers` now arrive as the handler's own second parameter
+    // (threaded by the orchestrator), not via any state buildBlueprint()
+    // previously had to populate first.
+    await plugin.hooks!.preInit![0]!(fakePorts(), { greeting: 'hello from preInit' });
 
-    expect(seenMessage).toBeUndefined(); // {}.greeting
+    expect(seenMessage).toBe('hello from preInit');
   });
 
   it('a hook ActionStep referencing a non-hook action throws when the handler runs', async () => {
@@ -377,7 +379,7 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     const plugin = compileScaffold(def, new FakeEvaluator());
     plugin.buildBlueprint({});
 
-    await expect(plugin.hooks!.postInit![0]!(fakePorts())).rejects.toThrow(/not "hook"/);
+    await expect(plugin.hooks!.postInit![0]!(fakePorts(), {})).rejects.toThrow(/not "hook"/);
   });
 
   it('a hook ActionStep referencing an unknown action throws when the handler runs', async () => {
@@ -385,7 +387,7 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     const plugin = compileScaffold(def, new FakeEvaluator());
     plugin.buildBlueprint({});
 
-    await expect(plugin.hooks!.postInit![0]!(fakePorts())).rejects.toThrow(/[Uu]nknown action/);
+    await expect(plugin.hooks!.postInit![0]!(fakePorts(), {})).rejects.toThrow(/[Uu]nknown action/);
   });
 });
 
@@ -454,19 +456,6 @@ describe('built-in action: writeFile (compose)', () => {
   it('rejects malformed params (content is not a string) via zod', () => {
     const kind = resolveAction('writeFile');
     expect(() => kind!.schema.parse({ path: 'a.txt', content: 42 })).toThrow();
-  });
-});
-
-describe('built-in action: copyFile (compose) — sugar over writeFile\'s shape', () => {
-  it('compiles content via Handlebars, same as writeFile', () => {
-    const kind = resolveAction('copyFile') as Extract<ActionKind, { tag: 'compose' }>;
-    const parsed = kind.schema.parse({ path: 'LICENSE', content: 'Copyright {{year}}' });
-    expect(kind.resolve(parsed, { year: '2026' })).toEqual({ path: 'LICENSE', content: 'Copyright 2026' });
-  });
-
-  it('rejects malformed params (missing path) via zod', () => {
-    const kind = resolveAction('copyFile');
-    expect(() => kind!.schema.parse({ content: 'x' })).toThrow();
   });
 });
 

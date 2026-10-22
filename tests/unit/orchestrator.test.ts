@@ -33,7 +33,7 @@ type Call =
   | { step: 'hook'; name: HookName; index: number };
 
 /** A test's own hook body — invoked after the harness records the 'hook' call. */
-type HookBody = (ports: HookPorts) => void | Promise<void>;
+type HookBody = (ports: HookPorts, answers: Answers) => void | Promise<void>;
 
 interface Harness {
   calls: Call[];
@@ -71,9 +71,9 @@ function harness(opts: {
     ? (Object.fromEntries(
         (Object.entries(opts.hooks) as [HookName, HookBody[]][]).map(([name, bodies]) => [
           name,
-          bodies.map((body, index) => async (ports: HookPorts) => {
+          bodies.map((body, index) => async (ports: HookPorts, answers: Answers) => {
             calls.push({ step: 'hook', name, index });
-            await body(ports);
+            await body(ports, answers);
           }),
         ])
       ) as NonNullable<StackfoldPlugin['hooks']>)
@@ -605,6 +605,38 @@ describe('runPlugin — ARCH-001 hook invocation points (preInit/postWrite/postI
       fileWriter: h.ports.fileWriter,
       processRunner: h.ports.processRunner,
     });
+  });
+
+  it('passes the same resolved answers reference to every hook moment (preInit/postWrite/postInit), never re-resolved per call', async () => {
+    const seenAnswers: Record<HookName, Answers> = {} as Record<HookName, Answers>;
+    const h = harness({
+      questions: [{ id: 'name', message: 'Name?', type: 'input' }],
+      answers: { name: 'demo' },
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [{ kind: 'git-init' }] },
+      hooks: {
+        preInit: [
+          (_ports, answers) => {
+            seenAnswers.preInit = answers;
+          },
+        ],
+        postWrite: [
+          (_ports, answers) => {
+            seenAnswers.postWrite = answers;
+          },
+        ],
+        postInit: [
+          (_ports, answers) => {
+            seenAnswers.postInit = answers;
+          },
+        ],
+      },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(seenAnswers.preInit).toEqual({ name: 'demo' });
+    expect(seenAnswers.postWrite).toBe(seenAnswers.preInit);
+    expect(seenAnswers.postInit).toBe(seenAnswers.preInit);
   });
 
   it('wraps a thrown preInit hook in HookError, naming the hook and the handler index', async () => {

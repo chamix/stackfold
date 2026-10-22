@@ -18,7 +18,7 @@
  * execution"): Handlebars templates compiled here come from the
  * `ScaffoldDefinition` itself — a trusted, author-written template, never
  * unvalidated external input. This is actively enforced, not merely
- * asserted: `writeFile`/`copyFile` declare `content` as a `literalKeys`
+ * asserted: `writeFile` declares `content` as a `literalKeys`
  * entry (see `ActionKind`/`resolveParams()` below), so expression
  * resolution never runs on `content` at all — it always reaches
  * `compileTemplate()` as the definition's own literal string, never a
@@ -76,10 +76,10 @@ import type {
  * expression-resolved, even though everything else in `params` is walked
  * for `{ var: ... }`-shaped expressions (see `resolveParams()` below). Only
  * the action's own registration knows which of its fields carry semantics
- * incompatible with "may be computed from live answers" — `writeFile`/
- * `copyFile` use this for `content`, which must stay the
- * `ScaffoldDefinition`'s own literal, author-written string, since it is
- * later compiled as a Handlebars template against `answers`.
+ * incompatible with "may be computed from live answers" — `writeFile`
+ * uses this for `content`, which must stay the `ScaffoldDefinition`'s own
+ * literal, author-written string, since it is later compiled as a
+ * Handlebars template against `answers`.
  */
 export type ActionKind =
   | {
@@ -141,22 +141,7 @@ export interface ScaffoldDefinition {
  * (Invariant E) and only ever run later, when the orchestrator calls them.
  */
 export function compileScaffold(definition: ScaffoldDefinition, evaluator: ExpressionEvaluator): StackfoldPlugin {
-  // `compileScaffold()` itself never receives `answers` — only
-  // `buildBlueprint(answers)` does, once per `runPlugin()` invocation. A
-  // compiled hook's `ActionStep`s must still resolve their own expressions
-  // "at the moment they run" (spec step 5), so they close over this mutable
-  // cell rather than a fixed value. `buildBlueprint()` updates the cell as
-  // its first act. Consequence, explicitly called out rather than silently
-  // wrong: `preInit` hooks run *before* `buildBlueprint()` in a given
-  // `runPlugin()` call (Invariant E — preInit is "before the blueprint is
-  // built"), so on every invocation a preInit hook's expressions resolve
-  // against `{}` (no answers yet) unless a previous invocation of the same
-  // compiled plugin already populated the cell. `postWrite`/`postInit`
-  // hooks always run after `buildBlueprint()` for that same invocation, so
-  // they see the real `answers`.
-  let currentAnswers: Answers = {};
-
-  const hooks = definition.hooks ? compileHooks(definition.hooks, evaluator, () => currentAnswers) : undefined;
+  const hooks = definition.hooks ? compileHooks(definition.hooks, evaluator) : undefined;
 
   return {
     id: definition.id,
@@ -169,8 +154,6 @@ export function compileScaffold(definition: ScaffoldDefinition, evaluator: Expre
     },
 
     buildBlueprint(answers: Answers): ProjectBlueprint {
-      currentAnswers = answers;
-
       const contributions: FileContribution[] = [];
       const postActions: PostActionDefinition[] = [];
 
@@ -209,22 +192,21 @@ export function compileScaffold(definition: ScaffoldDefinition, evaluator: Expre
 
 function compileHooks(
   hooks: Partial<Record<HookName, ActionStep[]>>,
-  evaluator: ExpressionEvaluator,
-  getAnswers: () => Answers
+  evaluator: ExpressionEvaluator
 ): Partial<Record<HookName, HookHandler[]>> {
   const compiled: Partial<Record<HookName, HookHandler[]>> = {};
 
   for (const hookName of Object.keys(hooks) as HookName[]) {
     const steps = hooks[hookName];
     if (!steps) continue;
-    compiled[hookName] = steps.map((step) => compileHookStep(step, evaluator, getAnswers));
+    compiled[hookName] = steps.map((step) => compileHookStep(step, evaluator));
   }
 
   return compiled;
 }
 
-function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator, getAnswers: () => Answers): HookHandler {
-  return async (ports: HookPorts): Promise<void> => {
+function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator): HookHandler {
+  return async (ports: HookPorts, answers: Answers): Promise<void> => {
     const kind = resolveAction(step.action);
     if (!kind) {
       throw new Error(`Unknown action "${step.action}" referenced under "hooks"`);
@@ -233,7 +215,7 @@ function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator, getAn
       throw new Error(`Action "${step.action}" is registered as "${kind.tag}", not "hook" — cannot run as a hook`);
     }
 
-    const resolvedParams = resolveParams(step.params, evaluator, getAnswers(), kind.literalKeys);
+    const resolvedParams = resolveParams(step.params, evaluator, answers, kind.literalKeys);
     const parsedParams: unknown = kind.schema.parse(resolvedParams);
     await kind.handler(parsedParams, ports);
   };
@@ -258,8 +240,8 @@ function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator, getAn
  * out an exception: a top-level `params` key named in it is passed through
  * completely untouched — not walked, not expression-resolved — because
  * that field's value must remain the `ScaffoldDefinition`'s own literal
- * authoring-time data (see `writeFile`/`copyFile`'s `content`, and this
- * module's header comment). If the author passed an expression there
+ * authoring-time data (see `writeFile`'s `content`, and this module's
+ * header comment). If the author passed an expression there
  * anyway, it reaches the action's zod schema as a plain object/array
  * rather than a resolved value, so `schema.parse()` is what rejects it.
  */
@@ -321,18 +303,6 @@ const writeFileSchema = z.object({
   strategy: mergeStrategySchema.optional(),
 });
 
-/**
- * `copyFile` is sugar over the same shape as `writeFile`, not a disk-read
- * operation: a `ComposeAction` must stay pure (no I/O — Inward Dependency
- * Rule, same reasoning that keeps `fs` out of `core/`), so there is no
- * actual source file to "copy" from. It exists as a separately-named
- * action purely for scaffold-authoring readability (e.g. "copy this
- * license text" vs. "write this generated file") — both compile `content`
- * through Handlebars identically (spec item 4's built-ins list groups them
- * together for exactly this reason).
- */
-const copyFileSchema = writeFileSchema;
-
 const runCommandSchema = z.object({
   command: z.string().trim().min(1, 'runCommand requires a non-empty "command"'),
   args: z.array(z.string()).default([]),
@@ -375,17 +345,6 @@ registerAction('writeFile', {
   literalKeys: ['content'],
   resolve: (params, ctx): FileContribution => {
     const { path, content, strategy } = params as z.infer<typeof writeFileSchema>;
-    return { path, content: compileTemplate(content, ctx), ...(strategy ? { strategy } : {}) };
-  },
-});
-
-registerAction('copyFile', {
-  tag: 'compose',
-  schema: copyFileSchema,
-  // Same rationale as `writeFile` above — `content` stays literal.
-  literalKeys: ['content'],
-  resolve: (params, ctx): FileContribution => {
-    const { path, content, strategy } = params as z.infer<typeof copyFileSchema>;
     return { path, content: compileTemplate(content, ctx), ...(strategy ? { strategy } : {}) };
   },
 });

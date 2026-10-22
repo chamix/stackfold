@@ -86,6 +86,11 @@ export type HookName = 'preInit' | 'postWrite' | 'postInit';
  * `OrchestratorPorts` (`core/orchestrator.ts`) field-for-field; kept as a
  * separate type here since `core/types.ts` is the pure-data module and
  * `OrchestratorPorts` belongs to the orchestrator.
+ *
+ * A `HookHandler` also receives the real `answers` resolved for this
+ * `runPlugin()` invocation as its second parameter — the same reference at
+ * all three lifecycle moments (preInit/postWrite/postInit), since answers
+ * never change within one invocation.
  */
 export interface HookPorts {
   prompter: Prompter;
@@ -93,7 +98,7 @@ export interface HookPorts {
   processRunner: ProcessRunner;
 }
 
-export type HookHandler = (ports: HookPorts) => void | Promise<void>;
+export type HookHandler = (ports: HookPorts, answers: Answers) => void | Promise<void>;
 
 export interface StackfoldPlugin {
   readonly id: string;
