@@ -1,5 +1,6 @@
 import type { Answers } from '../../core/types.js';
-import { MAX_PACKAGE_NAME_LENGTH, appNameSchema, toValidate } from '../../core/validation.js';
+import { toBridgeGlobal, toPackageName } from '../../core/stringTransforms.js';
+import { appNameSchema, toValidate } from '../../core/validation.js';
 
 /**
  * electron-ts Tier-1 shell: answer resolution + the data-driven template
@@ -43,39 +44,6 @@ export interface ResolvedContext {
   includeAboutHelp: boolean;
 }
 
-/** Derives a URL-safe npm package name from a human-readable app name. */
-export function toPackageName(appName: string): string {
-  return appName
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, MAX_PACKAGE_NAME_LENGTH)
-    .replace(/-+$/, '');
-}
-
-/**
- * camelCases the package name into a valid JS identifier and appends a
- * fixed `Api` suffix: `my-cool-app` → `myCoolAppApi`. The spec's
- * `-([a-z])` rule is widened to `-([a-z0-9])` so a digit after a hyphen
- * (`app-2x`) can't leave a '-' behind, and a leading digit (`3d-viewer`)
- * gets an `app` prefix, since identifiers can't start with one.
- *
- * The `Api` suffix is load-bearing, not cosmetic: plausible app names
- * (e.g. "History", "Crypto", "Performance", "Origin") camelCase to names
- * that already exist on `window` (`history`, `crypto`, …), and
- * `contextBridge.exposeInMainWorld` is expected to throw when asked to
- * bind over an existing window property. A fixed suffix rules this out
- * for every input, which is cheaper to keep correct than a denylist that
- * would need maintaining against future browser globals.
- */
-export function toBridgeGlobal(packageName: string): string {
-  const camel = packageName.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-  const identifier = /^[0-9]/.test(camel) ? `app${camel}` : camel;
-  return `${identifier}Api`;
-}
-
 function optionalString(answers: Answers, id: string, fallback: string): string {
   const value = answers[id];
   return value === undefined ? fallback : String(value).trim();
@@ -103,7 +71,7 @@ export function resolveContext(answers: Answers, now: Date): ResolvedContext {
     author: optionalString(answers, 'author', DEFAULT_AUTHOR),
     packageName,
     appId: `com.${packageName}.app`,
-    bridgeGlobal: toBridgeGlobal(packageName),
+    bridgeGlobal: toBridgeGlobal(packageName, 'Api'),
     ipcPrefix: packageName,
     year: now.getFullYear(),
     includeSettings: optionalBoolean(answers, 'includeSettings', false),

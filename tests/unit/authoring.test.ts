@@ -8,6 +8,7 @@ import {
   type ScaffoldDefinition,
 } from '../../src/core/authoring.js';
 import type { ExpressionEvaluator } from '../../src/core/ports.js';
+import { toBridgeGlobal, toPackageName } from '../../src/core/stringTransforms.js';
 import type { Answers, HookPorts } from '../../src/core/types.js';
 // Task 035, acceptance criterion 5's "real JSONLogic" case: the only test in
 // this file importing the real adapter rather than `FakeEvaluator` — test
@@ -874,7 +875,7 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
     const kind = patchFileKind();
     const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
 
-    await kind.handler(parsed, ports);
+    await kind.handler(parsed, ports, {});
 
     expect(await ports.fileWriter.readFile(PATH)).toBe(`a\nnew\n${ANCHOR}\nb\n`);
   });
@@ -885,7 +886,7 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
     const kind = patchFileKind();
     const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'after' });
 
-    await kind.handler(parsed, ports);
+    await kind.handler(parsed, ports, {});
 
     expect(await ports.fileWriter.readFile(PATH)).toBe(`a\n${ANCHOR}\nnew\nb\n`);
   });
@@ -896,7 +897,7 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
     const kind = patchFileKind();
     const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
 
-    await kind.handler(parsed, ports);
+    await kind.handler(parsed, ports, {});
 
     expect(await ports.fileWriter.readFile(PATH)).toBe(already);
   });
@@ -906,7 +907,7 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
     const kind = patchFileKind();
     const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
 
-    await expect(kind.handler(parsed, ports)).rejects.toThrow(/anchor/i);
+    await expect(kind.handler(parsed, ports, {})).rejects.toThrow(/anchor/i);
   });
 
   it('throws loudly when the target file does not exist', async () => {
@@ -914,7 +915,7 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
     const kind = patchFileKind();
     const parsed = kind.schema.parse({ path: PATH, anchor: ANCHOR, insert: 'new\n', position: 'before' });
 
-    await expect(kind.handler(parsed, ports)).rejects.toThrow(/does not exist/i);
+    await expect(kind.handler(parsed, ports, {})).rejects.toThrow(/does not exist/i);
   });
 
   it('rejects malformed params (missing position) via zod', () => {
@@ -993,6 +994,193 @@ describe('built-in action: patchFile (hook) — Task 034', () => {
       await expect(plugin.hooks!.postInit![0]!(fakePorts(), { untrustedPath: PATH })).rejects.toThrow();
       // The evaluator must never even be asked to resolve "path".
       expect(evaluator.calls).toEqual([]);
+    });
+  });
+});
+
+describe('built-in action: deriveAnswer (hook) — Task 036', () => {
+  function deriveAnswerKind(): Extract<ActionKind, { tag: 'hook' }> {
+    return resolveAction('deriveAnswer') as Extract<ActionKind, { tag: 'hook' }>;
+  }
+
+  it('is registered as a "hook" action with literalKeys: ["from", "to", "transform", "suffix"]', () => {
+    const kind = deriveAnswerKind();
+    expect(kind.tag).toBe('hook');
+    expect(kind.literalKeys).toEqual(['from', 'to', 'transform', 'suffix']);
+  });
+
+  describe('transform: npm-slug', () => {
+    it('slugifies a plain app name', async () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = { appName: 'My Cool App' };
+      const parsed = kind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' });
+
+      await kind.handler(parsed, fakePorts(), answers);
+
+      expect(answers['packageName']).toBe('my-cool-app');
+    });
+
+    it.each([
+      ['Ünïcödé Äpp', 'unicode-app'],
+      ['UPPER CASE', 'upper-case'],
+      ['weird!!!@@@name???', 'weird-name'],
+      ['!!!', ''],
+    ])('slugifies %j to %j (adversarial input)', async (appName, expected) => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = { appName };
+      const parsed = kind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' });
+
+      await kind.handler(parsed, fakePorts(), answers);
+
+      expect(answers['packageName']).toBe(expected);
+    });
+  });
+
+  describe('transform: js-identifier-suffix', () => {
+    it('camelCases and appends the given "suffix" — not hardcoded to "Api"', async () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = { packageName: 'my-cool-app' };
+      const parsed = kind.schema.parse({
+        from: 'packageName',
+        to: 'bridgeGlobal',
+        transform: 'js-identifier-suffix',
+        suffix: 'Api',
+      });
+
+      await kind.handler(parsed, fakePorts(), answers);
+
+      expect(answers['bridgeGlobal']).toBe('myCoolAppApi');
+    });
+
+    it('uses a different "suffix" to prove parametrization, not just the default-shaped case', async () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = { packageName: 'my-cool-app' };
+      const parsed = kind.schema.parse({
+        from: 'packageName',
+        to: 'bridgeGlobal',
+        transform: 'js-identifier-suffix',
+        suffix: 'Bridge',
+      });
+
+      await kind.handler(parsed, fakePorts(), answers);
+
+      expect(answers['bridgeGlobal']).toBe('myCoolAppBridge');
+    });
+  });
+
+  describe('transform: current-year', () => {
+    it('writes the real current year — no injectable clock', async () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = {};
+      const parsed = kind.schema.parse({ from: 'unused', to: 'year', transform: 'current-year' });
+
+      await kind.handler(parsed, fakePorts(), answers);
+
+      expect(answers['year']).toBe(new Date().getFullYear());
+    });
+  });
+
+  it('chains two deriveAnswer steps — npm-slug feeding js-identifier-suffix, mirroring electron-stackfold (future work)', async () => {
+    const slugKind = deriveAnswerKind();
+    const suffixKind = resolveAction('deriveAnswer') as Extract<ActionKind, { tag: 'hook' }>;
+    const answers: Answers = { appName: 'My Cool App' };
+
+    const slugParams = slugKind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' });
+    await slugKind.handler(slugParams, fakePorts(), answers);
+
+    const suffixParams = suffixKind.schema.parse({
+      from: 'packageName',
+      to: 'bridgeGlobal',
+      transform: 'js-identifier-suffix',
+      suffix: 'Api',
+    });
+    await suffixKind.handler(suffixParams, fakePorts(), answers);
+
+    expect(answers).toEqual({
+      appName: 'My Cool App',
+      packageName: 'my-cool-app',
+      bridgeGlobal: 'myCoolAppApi',
+    });
+  });
+
+  it('rejects malformed params (invalid transform) via zod', () => {
+    const kind = deriveAnswerKind();
+    expect(() => kind.schema.parse({ from: 'x', to: 'y', transform: 'not-a-real-transform' })).toThrow();
+  });
+
+  describe('wired through the real pipeline (compileScaffold() → compileHookStep())', () => {
+    it('a preInit deriveAnswer step, compiled via compileScaffold(), derives "packageName" into the real answers object passed to the compiled handler', async () => {
+      const def = definition({
+        id: 'derive-answer-preinit-wired',
+        hooks: {
+          preInit: [step('deriveAnswer', { from: 'appName', to: 'packageName', transform: 'npm-slug' })],
+        },
+      });
+      const plugin = compileScaffold(def, new FakeEvaluator());
+      const answers: Answers = { appName: 'My Cool App' };
+
+      // Deliberately NOT calling buildBlueprint() first — mirrors the real
+      // orchestrator's order (preInit fires before buildBlueprint()) and the
+      // existing preInit precedent above. This exercises the actual
+      // compileHookStep() call site — `kind.handler(parsedParams, ports,
+      // answers)` — rather than calling `kind.handler` directly, which is
+      // all the describe block above this one does.
+      await plugin.hooks!.preInit![0]!(fakePorts(), answers);
+
+      expect(answers['packageName']).toBe('my-cool-app');
+    });
+  });
+});
+
+/**
+ * Direct unit coverage for `core/stringTransforms.ts` (Task 036). This
+ * module has no `electron-ts`-specific test file of its own — its only
+ * existing coverage was indirect, through `electron-ts-plugin.test.ts`'s
+ * `resolveContext()` tests — and a new `tests/unit/stringTransforms.test.ts`
+ * is out of this task's scope (`.agents/current_scope.json` names
+ * `tests/unit/authoring.test.ts` only), so these cases live here instead,
+ * in their own describe block. See the delegation's report for the explicit
+ * flag to the Lead about whether a follow-up should relocate this block to
+ * its own file.
+ */
+describe('core/stringTransforms.ts — toPackageName / toBridgeGlobal (Task 036, direct coverage)', () => {
+  describe('toPackageName', () => {
+    it('slugifies a plain, human-readable name', () => {
+      expect(toPackageName('My Cool App')).toBe('my-cool-app');
+    });
+
+    it('normalizes accented/unicode characters by stripping combining diacritics', () => {
+      expect(toPackageName('Ünïcödé Äpp')).toBe('unicode-app');
+    });
+
+    it('lowercases uppercase input', () => {
+      expect(toPackageName('UPPER CASE')).toBe('upper-case');
+    });
+
+    it('collapses symbols/punctuation runs into single hyphens, trimmed at both ends', () => {
+      expect(toPackageName('weird!!!@@@name???')).toBe('weird-name');
+    });
+
+    it('slugifies to an empty string when every character is stripped', () => {
+      expect(toPackageName('!!!')).toBe('');
+    });
+  });
+
+  describe('toBridgeGlobal', () => {
+    it('camelCases a hyphenated package name and appends the given suffix', () => {
+      expect(toBridgeGlobal('my-cool-app', 'Api')).toBe('myCoolAppApi');
+    });
+
+    it('requires an explicit suffix — a different suffix produces a different identifier', () => {
+      expect(toBridgeGlobal('my-cool-app', 'Bridge')).toBe('myCoolAppBridge');
+    });
+
+    it('prefixes with "app" when the camelCased result would start with a digit', () => {
+      expect(toBridgeGlobal('3d-viewer', 'Api')).toBe('app3dViewerApi');
+    });
+
+    it('produces a valid JS identifier for a digit immediately after a hyphen', () => {
+      expect(toBridgeGlobal('app-2x', 'Api')).toBe('app2xApi');
     });
   });
 });
