@@ -36,6 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used only by hook-level actions such as `patchFile`, never by the
   `compose`/`writeFile` path. `writeFile`'s own exclusive "never silently
   overwrite" semantics are unchanged.
+- **`deriveAnswer` hook action** (`core/authoring.ts`, Task 036): a new
+  `ScaffoldDefinition` hook action that computes a new `answers` entry from
+  an existing one, via one of three closed transforms — `npm-slug`
+  (`toPackageName()`), `js-identifier-suffix` (`toBridgeGlobal()` with an
+  explicit, required `suffix`), and `current-year` (reads `Date.now()`
+  directly, no injectable clock). `from`/`to`/`transform`/`suffix` are all
+  `literalKeys`, same rationale as `patchFile`'s `path`/`anchor`: they are
+  field names/mode selectors the scaffold author writes, never values
+  computed from live answers. `toPackageName()`/`toBridgeGlobal()`
+  themselves moved out of `plugins/electron-ts/templates.ts` into a new
+  shared `core/stringTransforms.ts`, so both `deriveAnswer` and
+  `electron-ts` reuse the same implementation; `toBridgeGlobal()`'s `Api`
+  suffix is no longer hardcoded — every caller (including `electron-ts`'s
+  own `resolveContext()`) now passes it explicitly, with zero behavior
+  change for `electron-ts`.
 
 ### Changed
 

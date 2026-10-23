@@ -39,6 +39,7 @@ import Handlebars from 'handlebars';
 import { z } from 'zod';
 import { composeBlueprint, type FileContribution, type MergeStrategy } from './composition.js';
 import type { ExpressionEvaluator } from './ports.js';
+import { toBridgeGlobal, toPackageName } from './stringTransforms.js';
 import type {
   Answers,
   HookHandler,
@@ -97,7 +98,7 @@ export type ActionKind =
   | {
       tag: 'hook';
       schema: z.ZodType;
-      handler: (params: unknown, ports: HookPorts) => void | Promise<void>;
+      handler: (params: unknown, ports: HookPorts, answers: Answers) => void | Promise<void>;
       literalKeys?: readonly string[];
     };
 
@@ -240,7 +241,7 @@ function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator): Hook
 
     const resolvedParams = resolveParams(step.params, evaluator, answers, kind.literalKeys);
     const parsedParams: unknown = kind.schema.parse(resolvedParams);
-    await kind.handler(parsedParams, ports);
+    await kind.handler(parsedParams, ports, answers);
   };
 }
 
@@ -515,5 +516,68 @@ registerAction('patchFile', {
 
     const patched = insertAtAnchor(current, anchor, insert, position);
     await ports.fileWriter.overwriteFile(path, patched);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// deriveAnswer (Task 036 — .agents/specs/arch-001-task036-derived-answers.md
+// §Step 1 item 5): a hook action that computes a new `answers` entry from an
+// existing one, via one of a fixed, closed set of transforms. Exists for the
+// `electron-ts` → `electron-stackfold` migration (future work, not part of
+// this task), which needs `packageName`/`bridgeGlobal`-shaped values
+// available as real `answers` entries a scaffold's own `steps`/`hooks` can
+// reference — today those are computed inline inside `templates.ts`'s own
+// `resolveContext()`, invisible to a `ScaffoldDefinition`.
+//
+// `literalKeys: ['from', 'to', 'transform', 'suffix']`: all four are field
+// names/mode selectors the scaffold author writes at authoring time — which
+// answers key to read, which to write, which transform to run, which fixed
+// suffix string to append — never values computed from live `answers`,
+// mirroring `patchFile`'s own `path`/`anchor` protection (same rationale: a
+// field that controls *where a mutation lands or what kind it is* must never
+// be answer-controlled).
+//
+// Deliberately a closed, 3-case switch, not an action-per-transform or a
+// general transformation language: `npm-slug`/`js-identifier-suffix`/
+// `current-year` are exactly the three derivations `electron-stackfold`
+// needs, reusing `toPackageName`/`toBridgeGlobal` verbatim rather than
+// re-implementing them a second time (Invariant: one derivation, one
+// implementation). Growing this into a general string-transform DSL is an
+// explicit non-goal — a scaffold that needs something this switch doesn't
+// cover is a `hook` action of its own, not a new case bolted on here.
+//
+// `current-year` reads `Date.now()` (via `new Date()`) directly, with no
+// injectable clock: `compileScaffold()`'s public signature does not thread a
+// clock through to hook handlers, and adding one for this single case isn't
+// worth the ripple. The existing `electron-ts` plugin's own `year` field is
+// still produced the normal way (`resolveContext(answers, now)`, clock
+// injected by its caller) — this transform only matters for a
+// `ScaffoldDefinition` that wants a copyright year as a real `answers` entry.
+// ---------------------------------------------------------------------------
+
+const deriveAnswerSchema = z.object({
+  from: z.string().trim().min(1, 'deriveAnswer requires a non-empty "from"'),
+  to: z.string().trim().min(1, 'deriveAnswer requires a non-empty "to"'),
+  transform: z.enum(['npm-slug', 'js-identifier-suffix', 'current-year']),
+  suffix: z.string().optional(),
+});
+
+registerAction('deriveAnswer', {
+  tag: 'hook',
+  schema: deriveAnswerSchema,
+  literalKeys: ['from', 'to', 'transform', 'suffix'],
+  handler: (params, _ports, answers): void => {
+    const { from, to, transform, suffix } = params as z.infer<typeof deriveAnswerSchema>;
+    switch (transform) {
+      case 'npm-slug':
+        answers[to] = toPackageName(String(answers[from] ?? ''));
+        break;
+      case 'js-identifier-suffix':
+        answers[to] = toBridgeGlobal(String(answers[from] ?? ''), suffix ?? '');
+        break;
+      case 'current-year':
+        answers[to] = new Date().getFullYear();
+        break;
+    }
   },
 });
