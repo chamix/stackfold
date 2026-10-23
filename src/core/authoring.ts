@@ -121,6 +121,17 @@ export function resolveAction(name: string): ActionKind | undefined {
 export interface ActionStep {
   action: string;
   params: unknown;
+  /**
+   * JSONLogic expression (or a literal boolean) evaluated against
+   * `answers` before this step runs (Task 035). Absent ⇒ the step always
+   * runs — zero behavior change for any `ScaffoldDefinition` that predates
+   * this field. If it evaluates falsy, the step is skipped entirely: for
+   * compose/process, no `FileContribution`/`PostActionDefinition` is
+   * added (and `resolveParams()`/`schema.parse()` never run for it — the
+   * unchosen branch doesn't need valid params); for a hook step, the
+   * handler is never invoked.
+   */
+  when?: unknown;
 }
 
 export interface ScaffoldDefinition {
@@ -158,6 +169,10 @@ export function compileScaffold(definition: ScaffoldDefinition, evaluator: Expre
       const postActions: PostActionDefinition[] = [];
 
       for (const step of definition.steps) {
+        if (isGatedOff(step, evaluator, answers)) {
+          continue;
+        }
+
         const kind = resolveAction(step.action);
         if (!kind) {
           throw new Error(`Scaffold "${definition.id}" references unknown action "${step.action}"`);
@@ -205,8 +220,16 @@ function compileHooks(
   return compiled;
 }
 
+function isGatedOff(step: ActionStep, evaluator: ExpressionEvaluator, answers: Answers): boolean {
+  return step.when !== undefined && !evaluator.evaluate(step.when, answers);
+}
+
 function compileHookStep(step: ActionStep, evaluator: ExpressionEvaluator): HookHandler {
   return async (ports: HookPorts, answers: Answers): Promise<void> => {
+    if (isGatedOff(step, evaluator, answers)) {
+      return;
+    }
+
     const kind = resolveAction(step.action);
     if (!kind) {
       throw new Error(`Unknown action "${step.action}" referenced under "hooks"`);

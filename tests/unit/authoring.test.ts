@@ -9,6 +9,12 @@ import {
 } from '../../src/core/authoring.js';
 import type { ExpressionEvaluator } from '../../src/core/ports.js';
 import type { Answers, HookPorts } from '../../src/core/types.js';
+// Task 035, acceptance criterion 5's "real JSONLogic" case: the only test in
+// this file importing the real adapter rather than `FakeEvaluator` — test
+// code, not a `core/` production import, so the Inward Dependency Rule
+// (`core/authoring.ts`'s own header comment) does not govern this file. See
+// the `per-step "when" conditionals` describe block below for why.
+import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
 
 /**
  * A minimal, self-contained `ExpressionEvaluator` test-double (per the
@@ -403,6 +409,285 @@ describe('compileScaffold — hooks compile to HookHandler[] closing over evalua
     plugin.buildBlueprint({});
 
     await expect(plugin.hooks!.postInit![0]!(fakePorts(), {})).rejects.toThrow(/[Uu]nknown action/);
+  });
+});
+
+// Task 035 (.agents/specs/scaffold-step-when-conditional.md §Step 0/Step 1).
+// `when` is a direct, additive extension of `ActionStep` — absent ⇒ the
+// step always runs (every test above this point never sets it, and all
+// keep passing unchanged, which is the regression guarantee acceptance
+// criterion 1 asks for). Present ⇒ evaluated as a JSONLogic expression (or
+// literal boolean, acceptance criterion 4) against `answers`, gating
+// whether the step runs at all — before `resolveAction()`/`resolveParams()`/
+// `schema.parse()` for compose/process steps, and before the handler itself
+// for hook steps.
+describe('compileScaffold — per-step "when" conditionals', () => {
+  describe('compose/process steps (buildBlueprint())', () => {
+    it('a compose step with when: false is skipped entirely — no FileContribution, and its (invalid) params are never resolved/validated', () => {
+      const def = definition({
+        id: 'when-false-compose',
+        steps: [
+          // Missing the required "content" key — would throw at
+          // `writeFileSchema.parse()` if params resolution/validation ran
+          // for this step at all. `{ const: false }` (not a bare `false`
+          // literal — `FakeEvaluator` only understands `var`/`const`-shaped
+          // objects; the bare-boolean case is covered separately below
+          // against the real evaluator) is enough to exercise the gating
+          // mechanics in isolation.
+          { action: 'writeFile', params: { path: 'skip.txt' }, when: { const: false } },
+        ],
+      });
+      const evaluator = new FakeEvaluator();
+
+      const blueprint = compileScaffold(def, evaluator).buildBlueprint({});
+
+      expect(blueprint.files).toEqual([]);
+      expect(blueprint.postActions).toEqual([]);
+      // The gate runs against the real answers; `resolveParams()` never ran
+      // for this step, so the evaluator was never asked to resolve
+      // anything *inside* params either — the only call it ever saw is the
+      // `when` check itself.
+      expect(evaluator.calls).toEqual([{ expr: { const: false }, context: {} }]);
+    });
+
+    it('a compose step with when: true runs normally', () => {
+      const def = definition({
+        id: 'when-true-compose',
+        steps: [{ action: 'writeFile', params: { path: 'run.txt', content: 'hi' }, when: { const: true } }],
+      });
+
+      const blueprint = compileScaffold(def, new FakeEvaluator()).buildBlueprint({});
+
+      expect(blueprint.files).toEqual([{ path: 'run.txt', content: 'hi' }]);
+    });
+
+    it('a step with no "when" at all still runs — explicit regression case for acceptance criterion 1', () => {
+      const def = definition({
+        id: 'when-absent-compose',
+        steps: [step('writeFile', { path: 'always.txt', content: 'hi' })],
+      });
+
+      const blueprint = compileScaffold(def, new FakeEvaluator()).buildBlueprint({});
+
+      expect(blueprint.files).toEqual([{ path: 'always.txt', content: 'hi' }]);
+    });
+
+    it('a process step with when: false is skipped — no PostActionDefinition added, and its (invalid) params are never validated', () => {
+      const def = definition({
+        id: 'when-false-process',
+        steps: [
+          // Empty "command" — would throw at `runCommandSchema.parse()` if
+          // params resolution/validation ran for this step at all.
+          { action: 'runCommand', params: { command: '' }, when: { const: false } },
+        ],
+      });
+
+      const blueprint = compileScaffold(def, new FakeEvaluator()).buildBlueprint({});
+
+      expect(blueprint.postActions).toEqual([]);
+    });
+
+    it('when evaluated via a JSONLogic expression (not a literal) against real answers, resolved through the injected evaluator', () => {
+      const def = definition({
+        id: 'when-expression-compose',
+        steps: [{ action: 'writeFile', params: { path: 'cond.txt', content: 'hi' }, when: { var: 'shouldWrite' } }],
+      });
+      const evaluator = new FakeEvaluator();
+
+      const skipped = compileScaffold(def, evaluator).buildBlueprint({ shouldWrite: false });
+      expect(skipped.files).toEqual([]);
+
+      const ran = compileScaffold(def, evaluator).buildBlueprint({ shouldWrite: true });
+      expect(ran.files).toEqual([{ path: 'cond.txt', content: 'hi' }]);
+    });
+  });
+
+  describe('hook steps (compileHookStep())', () => {
+    it('a hook step with when: false, evaluated against the real answers passed to the handler (not {}), is skipped — the handler never runs', async () => {
+      let invocations = 0;
+      registerAction('test-when-hook', {
+        tag: 'hook',
+        schema: { parse: (v: unknown) => v } as ActionKind extends { schema: infer S } ? S : never,
+        handler: () => {
+          invocations += 1;
+        },
+      });
+
+      const def = definition({
+        id: 'when-hook-gated',
+        hooks: { postInit: [{ action: 'test-when-hook', params: {}, when: { var: 'shouldRun' } }] },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      // Deliberately not calling buildBlueprint() first — same precedent as
+      // the existing preInit test above: the handler's own `answers`
+      // parameter is what must gate it, not anything buildBlueprint() set
+      // up. Real answers, not `{}` — the evaluator must see them.
+      await plugin.hooks!.postInit![0]!(fakePorts(), { shouldRun: false, other: 'field' });
+
+      expect(invocations).toBe(0);
+      expect(evaluator.calls).toContainEqual({
+        expr: { var: 'shouldRun' },
+        context: { shouldRun: false, other: 'field' },
+      });
+    });
+
+    it('a hook step with when: true, evaluated against the real answers passed to the handler, runs normally', async () => {
+      let invocations = 0;
+      let seenMessage: unknown;
+      registerAction('test-when-hook-runs', {
+        tag: 'hook',
+        schema: { parse: (v: unknown) => v } as ActionKind extends { schema: infer S } ? S : never,
+        handler: (params) => {
+          invocations += 1;
+          seenMessage = (params as { message: unknown }).message;
+        },
+      });
+
+      const def = definition({
+        id: 'when-hook-runs',
+        hooks: {
+          postInit: [
+            { action: 'test-when-hook-runs', params: { message: { var: 'greeting' } }, when: { var: 'shouldRun' } },
+          ],
+        },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      const answers = { shouldRun: true, greeting: 'hello world' };
+      await plugin.hooks!.postInit![0]!(fakePorts(), answers);
+
+      expect(invocations).toBe(1);
+      expect(seenMessage).toBe('hello world');
+      expect(evaluator.calls).toContainEqual({ expr: { var: 'shouldRun' }, context: answers });
+    });
+
+    it('a hook step with no "when" at all still invokes the handler — explicit regression case', async () => {
+      let invocations = 0;
+      registerAction('test-when-absent-hook', {
+        tag: 'hook',
+        schema: { parse: (v: unknown) => v } as ActionKind extends { schema: infer S } ? S : never,
+        handler: () => {
+          invocations += 1;
+        },
+      });
+
+      const def = definition({
+        id: 'when-absent-hook',
+        hooks: { postInit: [step('test-when-absent-hook', {})] },
+      });
+      const plugin = compileScaffold(def, new FakeEvaluator());
+
+      await plugin.hooks!.postInit![0]!(fakePorts(), {});
+
+      expect(invocations).toBe(1);
+    });
+  });
+
+  // Acceptance criterion 4: a literal boolean (not a JSONLogic rule object)
+  // must work as unconditional run/skip. `FakeEvaluator` only understands
+  // `var`/`const`-shaped objects (it throws on anything else, including a
+  // bare `true`/`false`), so this needs the real `json-logic-js` adapter —
+  // confirmed empirically (spec's Hallazgo B) that `jsonLogic.apply(true, ctx)
+  // === true` and `jsonLogic.apply(false, ctx) === false` with zero
+  // special-casing in the gate itself.
+  describe('literal boolean "when" (acceptance criterion 4, real JsonLogicExpressionEvaluator)', () => {
+    it('when: true (bare boolean) runs the step unconditionally', () => {
+      const def = definition({
+        id: 'when-literal-true',
+        steps: [{ action: 'writeFile', params: { path: 'always-on.txt', content: 'hi' }, when: true }],
+      });
+
+      const blueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({});
+
+      expect(blueprint.files).toEqual([{ path: 'always-on.txt', content: 'hi' }]);
+    });
+
+    it('when: false (bare boolean) skips the step unconditionally, without needing a real JSONLogic rule', () => {
+      const def = definition({
+        id: 'when-literal-false',
+        steps: [{ action: 'writeFile', params: { path: 'always-off.txt' }, when: false }],
+      });
+
+      const blueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({});
+
+      expect(blueprint.files).toEqual([]);
+    });
+  });
+
+  // Acceptance criterion 5's last bullet: de-risk real JSONLogic `or`/`!==`
+  // semantics against the exact shapes `electron-ts`'s own
+  // `needsRendererSplit`/`hasAuthor` conditions use today, ahead of the
+  // future `electron-stackfold` migration (spec's Hallazgo A). Wired through
+  // `compileScaffold()` end-to-end with the real adapter, not `FakeEvaluator`
+  // — `FakeEvaluator` only understands `var`/`const` and cannot exercise
+  // `or`/`!==` at all.
+  describe('real JSONLogic or/!== semantics — electron-ts\'s needsRendererSplit/hasAuthor conditions', () => {
+    const needsRendererSplit = { or: [{ var: 'includeSettings' }, { var: 'includeSkins' }] };
+    const hasAuthor = { '!==': [{ var: 'author' }, ''] };
+
+    function rendererSplitDefinition(): ScaffoldDefinition {
+      return definition({
+        id: 'electron-ts-like',
+        steps: [
+          { action: 'writeFile', params: { path: 'renderer/index.ts', content: 'renderer' }, when: needsRendererSplit },
+          { action: 'writeFile', params: { path: 'LICENSE', content: 'by {{author}}' }, when: hasAuthor },
+          step('writeFile', { path: 'main.ts', content: 'main' }),
+        ],
+      });
+    }
+
+    it('neither includeSettings nor includeSkins, no author: only the unconditional file is produced', () => {
+      const blueprint = compileScaffold(rendererSplitDefinition(), new JsonLogicExpressionEvaluator()).buildBlueprint({
+        includeSettings: false,
+        includeSkins: false,
+        author: '',
+      });
+
+      expect(blueprint.files.map((f) => f.path)).toEqual(['main.ts']);
+    });
+
+    it('includeSettings true (includeSkins false): the "or" resolves truthy, the renderer split file is produced', () => {
+      const blueprint = compileScaffold(rendererSplitDefinition(), new JsonLogicExpressionEvaluator()).buildBlueprint({
+        includeSettings: true,
+        includeSkins: false,
+        author: '',
+      });
+
+      expect(blueprint.files.map((f) => f.path)).toEqual(['renderer/index.ts', 'main.ts']);
+    });
+
+    it('includeSkins true (includeSettings false): the "or" still resolves truthy', () => {
+      const blueprint = compileScaffold(rendererSplitDefinition(), new JsonLogicExpressionEvaluator()).buildBlueprint({
+        includeSettings: false,
+        includeSkins: true,
+        author: '',
+      });
+
+      expect(blueprint.files.map((f) => f.path)).toEqual(['renderer/index.ts', 'main.ts']);
+    });
+
+    it('a non-empty author: the "!==" resolves truthy, the LICENSE file is produced', () => {
+      const blueprint = compileScaffold(rendererSplitDefinition(), new JsonLogicExpressionEvaluator()).buildBlueprint({
+        includeSettings: false,
+        includeSkins: false,
+        author: 'Ada Lovelace',
+      });
+
+      expect(blueprint.files.map((f) => f.path)).toEqual(['LICENSE', 'main.ts']);
+    });
+
+    it('both conditions truthy: both gated files are produced, alongside the unconditional one, in step order', () => {
+      const blueprint = compileScaffold(rendererSplitDefinition(), new JsonLogicExpressionEvaluator()).buildBlueprint({
+        includeSettings: true,
+        includeSkins: true,
+        author: 'Ada Lovelace',
+      });
+
+      expect(blueprint.files.map((f) => f.path)).toEqual(['renderer/index.ts', 'LICENSE', 'main.ts']);
+    });
   });
 });
 
