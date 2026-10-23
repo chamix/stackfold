@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing loudly (never guessing an insertion point) if the file or the
   anchor is missing. `insert` is expression-resolved against answers;
   `path`/`anchor` stay the scaffold author's own literal text.
+- **Per-step `when` conditional** (`core/authoring.ts`, Task 035): a new,
+  optional `ActionStep.when` field — a JSONLogic expression (or a literal
+  boolean) evaluated against `answers` — gates whether a step runs at
+  all, for both `steps` (compose/process) and `hooks` entries. A falsy
+  `when` skips a compose/process step entirely (no
+  `FileContribution`/`PostActionDefinition` added, and its params are
+  never resolved/validated) or skips a hook step's handler entirely.
+  Purely additive: absent `when` reproduces today's behavior exactly for
+  every existing `ScaffoldDefinition`.
 - **`FileWriter` port** (`core/ports.ts`, `infra/fs.ts`): two new methods,
   `readFile()` (returns `undefined` for a missing file) and
   `overwriteFile()` (unlike `writeFile`, overwrites an existing file) —
