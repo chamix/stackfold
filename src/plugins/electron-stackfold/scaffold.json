@@ -1,0 +1,465 @@
+{
+  "id": "electron-stackfold",
+  "description": "Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge) — authored declaratively via the scaffold-authoring system (ARCH-001), a functional port of electron-ts.",
+  "help": {
+    "name": "Electron + TypeScript (declarative)",
+    "details": "Generates the same Tier-1 Electron shell as electron-ts: context isolation + a disabled Node integration renderer, a narrow typed preload bridge (no raw ipcRenderer exposure), and a policy that opens external links in the OS browser instead of a new Electron window. Settings (Dark Mode), Skins (user-editable visual presets) and About/Help windows are optional, prompted during init. Authored as a declarative ScaffoldDefinition (Task 037) rather than hand-written TypeScript — see electron-ts for the original. Requires Node 22+ and enough disk/network for the Electron binary download on first `npm install`."
+  },
+  "questions": [
+    {
+      "id": "appName",
+      "message": "Application name",
+      "type": "input",
+      "default": "my-electron-app"
+    },
+    {
+      "id": "description",
+      "message": "Short description",
+      "type": "input",
+      "default": "An Electron + TypeScript desktop app."
+    },
+    {
+      "id": "author",
+      "message": "Author (optional, used for package.json and an MIT LICENSE)",
+      "type": "input",
+      "default": ""
+    },
+    {
+      "id": "includeSettings",
+      "message": "Include Settings (Dark Mode)?",
+      "type": "confirm",
+      "default": false
+    },
+    {
+      "id": "includeSkins",
+      "message": "Include Skins (user-editable visual presets)?",
+      "type": "confirm",
+      "default": false
+    },
+    {
+      "id": "includeAboutHelp",
+      "message": "Include About + Help windows?",
+      "type": "confirm",
+      "default": false
+    }
+  ],
+  "steps": [
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"name\": \"{{packageName}}\",\n  \"productName\": \"{{appName}}\",\n  \"version\": \"0.1.0\",\n  \"description\": \"{{description}}\",\n  \"private\": true,\n  {{#if author}}\"author\": \"{{author}}\",\n  \"license\": \"MIT\",\n  {{/if}}\"main\": \"dist/main/index.js\",\n  \"scripts\": {\n    \"build\": \"node scripts/build.mjs\",\n    \"dev\": \"npm run build && electron .\",\n    \"package\": \"electron-builder\",\n    \"typecheck\": \"tsc --noEmit -p tsconfig.typecheck.json\",\n    \"test\": \"vitest run\",\n    \"test:e2e\": \"playwright test\"\n  },\n  {{#if includeSettings}}\"dependencies\": {\n    \"zod\": \"^4.6.5\"\n  },\n  {{else}}{{#if includeSkins}}\"dependencies\": {\n    \"zod\": \"^4.6.5\"\n  },\n  {{/if}}{{/if}}\"devDependencies\": {\n    \"electron\": \"^44.4.5\",\n    \"typescript\": \"^6.0.3\",\n    \"vitest\": \"^5.0.2\",\n    \"@types/node\": \"^24.19.0\",\n    \"esbuild\": \"^0.28.2\",\n    \"electron-builder\": \"^26.15.3\",\n    \"@playwright/test\": \"^1.64.0\"\n  },\n  \"overrides\": {\n    \"@electron/get\": \"^5.1.0\",\n    \"glob\": \"^13.0.6\",\n    \"rimraf\": \"^6.1.3\"\n  }\n}\n",
+        "jsonEscapeKeys": [
+          "appName",
+          "description",
+          "author"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "README.md",
+        "content": "# {{appName}}\n\n{{description}}\n\n## Security posture\n\nEvery window is created with `secureWebPreferences()` (`src/main/windowConfig.ts`):\ncontext isolation and the sandbox are on and Node integration is off, set\nexplicitly rather than inherited from Electron's defaults. All in-app\nnavigation is blocked and `window.open` is always denied (`src/main/index.ts`);\nexternal http(s) links, classified by the pure `isExternalHttpUrl()` predicate\nin `src/main/linkPolicy.ts`, open in the system browser instead. The renderer\nreaches the main process only through the named `window.{{bridgeGlobal}}` bridge\ndeclared in `src/preload/api.ts`, which exposes no operations yet. Each new\noperation gets its own named channel and method there; the bridge never\nforwards raw Electron APIs.\n\n## Scripts\n\n- `npm run build`: compile TypeScript to `dist/`\n- `npm run dev`: rebuild and launch the app in a real Electron window\n- `npm run typecheck`: type-check without emitting\n- `npm test`: run the unit tests\n- `npm run test:e2e`: launch the real built app with Playwright and run the\n  e2e smoke suite (run `npm run build` first)\n- `npm run package`: build a Windows installer with electron-builder\n\n## CI & releases\n\n`.github/workflows/ci.yml` runs on every pull request: typecheck, build,\nunit tests, then the e2e suite, on `windows-latest`. It runs `npm ci`,\nwhich requires a committed `package-lock.json` — this project has none\nuntil your first `npm install`, so commit it once you have run that\nlocally; otherwise the first CI run fails loudly, by design.\n\n`.github/workflows/release.yml` runs the same checks on a `v*.*.*` tag,\nbuilds a Windows installer with electron-builder, and uploads it as a\nworkflow artifact. It does **not** publish anywhere\n(`electron-builder.yml`'s `publish: null`). To switch it to actually\npublishing a release, make these three edits:\n\n1. `electron-builder.yml`: change `publish: null` to a real target (e.g.\n   `github`).\n2. `release.yml`: change `--publish never` to `--publish always`.\n3. `release.yml`: change `permissions: contents: read` to\n   `contents: write`.\n\n`npm install` also needs real network access to **github.com releases**,\nnot just the npm registry, to download the Electron and Chromium\nbinaries (the `electron` devDependency's own postinstall). If that path\nis blocked while the registry itself is reachable, `npm install` can\nstill \"succeed\" with the binary missing, and the first `npm run test:e2e`\nrun will then attempt the download itself instead of failing cleanly at\ninstall time. Behind a corporate HTTP(S) proxy, set\n`ELECTRON_GET_USE_PROXY=true` (with `HTTPS_PROXY`/`HTTP_PROXY` already\nset) before `npm install` / `npm run package`, so the binary download\npicks up your proxy instead of failing outright.\n\nRelatedly, `esbuild`, `electron-builder` and `electron-winstaller` each\nrun their own `postinstall` install script to fetch native binaries\n(esbuild's own binary; electron-builder/electron-winstaller's packaging\nhelpers). That is expected behavior, not a sign of a compromised\ninstall, and nothing in this project needs `--ignore-scripts`.\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": ".gitignore",
+        "content": "node_modules/\ndist/\nout/\n.vite/\n*.log\nrelease/\ntest-results/\nplaywright-report/\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "LICENSE",
+        "content": "MIT License\n\nCopyright (c) {{year}} {{author}}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+        "jsonEscapeKeys": [
+          "author"
+        ]
+      },
+      "when": {
+        "!==": [
+          {
+            "var": "author"
+          },
+          ""
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.json",
+        "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\"\n    ],\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"outDir\": \"dist\",\n    \"rootDir\": \"src\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"types\": [\n      \"node\",\n      \"electron\"\n    ],\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src/**/*.ts\"\n  ]\n}\n"
+      },
+      "when": {
+        "!": {
+          "or": [
+            {
+              "var": "includeSettings"
+            },
+            {
+              "var": "includeSkins"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.base.json",
+        "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true\n  }\n}\n"
+      },
+      "when": {
+        "or": [
+          {
+            "var": "includeSettings"
+          },
+          {
+            "var": "includeSkins"
+          }
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.main.json",
+        "content": "{\n  \"extends\": \"./tsconfig.base.json\",\n  \"compilerOptions\": {\n    \"lib\": [\n      \"ES2023\"\n    ],\n    \"types\": [\n      \"node\",\n      \"electron\"\n    ],\n    \"outDir\": \"dist\",\n    \"rootDir\": \"src\"\n  },\n  \"include\": [\n    \"src/main/**/*.ts\",\n    \"src/preload/**/*.ts\"\n  ]\n}\n"
+      },
+      "when": {
+        "or": [
+          {
+            "var": "includeSettings"
+          },
+          {
+            "var": "includeSkins"
+          }
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.renderer.json",
+        "content": "{\n  \"extends\": \"./tsconfig.base.json\",\n  \"compilerOptions\": {\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"types\": [],\n    \"module\": \"ES2022\",\n    \"moduleResolution\": \"bundler\",\n    \"outDir\": \"dist\",\n    \"rootDir\": \"src\"\n  },\n  \"include\": [\n    \"src/renderer/**/*.ts\"\n  ]\n}\n"
+      },
+      "when": {
+        "or": [
+          {
+            "var": "includeSettings"
+          },
+          {
+            "var": "includeSkins"
+          }
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.typecheck.json",
+        "content": "{{#if includeSettings}}{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"noEmit\": true,\n    \"rootDir\": \".\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"types\": [\n      \"node\",\n      \"electron\"\n    ],\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src/main/**/*.ts\",\n    \"src/preload/**/*.ts\",\n    \"src/renderer/**/*.ts\",\n    \"tests/**/*.ts\",\n    \"vitest.config.ts\"\n  ]\n}\n{{else}}{{#if includeSkins}}{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"noEmit\": true,\n    \"rootDir\": \".\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"types\": [\n      \"node\",\n      \"electron\"\n    ],\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true\n  },\n  \"include\": [\n    \"src/main/**/*.ts\",\n    \"src/preload/**/*.ts\",\n    \"src/renderer/**/*.ts\",\n    \"tests/**/*.ts\",\n    \"vitest.config.ts\"\n  ]\n}\n{{else}}{\n  \"extends\": \"./tsconfig.json\",\n  \"compilerOptions\": {\n    \"noEmit\": true,\n    \"rootDir\": \".\"\n  },\n  \"include\": [\n    \"src/**/*.ts\",\n    \"tests/**/*.ts\",\n    \"vitest.config.ts\"\n  ]\n}\n{{/if}}{{/if}}"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "vitest.config.ts",
+        "content": "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n    environment: 'node',\n    include: ['tests/**/*.test.ts'],\n    passWithNoTests: true,\n  },\n});\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/windowConfig.ts",
+        "content": "import type { BrowserWindowConstructorOptions } from 'electron';\n\n/**\n * The non-negotiable security posture for every window.\n * Every key here is explicit even where it matches an Electron default —\n * an explicit value survives a future default change.\n */\nexport function secureWebPreferences(\n  preloadPath: string\n): BrowserWindowConstructorOptions['webPreferences'] {\n  return {\n    contextIsolation: true,\n    nodeIntegration: false,\n    sandbox: true,\n    preload: preloadPath,\n  };\n}\n{{#if includeAboutHelp}}\n\n/**\n * Options for a static, non-interactive window (About/Help): the same\n * isolation posture as `secureWebPreferences()`, with no `preload` key —\n * these windows have no bridge, so there is nothing to isolate a preload\n * script for (the narrow-bridge invariant, satisfied by zero bridge).\n */\nexport function staticWindowOptions(): BrowserWindowConstructorOptions {\n  return {\n    width: 640,\n    height: 480,\n    resizable: false,\n    minimizable: false,\n    maximizable: false,\n    fullscreenable: false,\n    webPreferences: {\n      contextIsolation: true,\n      nodeIntegration: false,\n      sandbox: true,\n    },\n  };\n}\n{{/if}}"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/linkPolicy.ts",
+        "content": "/**\n * True for any http(s) URL that isn't same-origin with `appOrigin`.\n * Parses with URL; never compares raw strings (prefix checks are\n * trivially bypassed, e.g. `https://app.example.evil.test`).\n */\nexport function isExternalHttpUrl(url: string, appOrigin: string): boolean {\n  let parsed: URL;\n  try {\n    parsed = new URL(url);\n  } catch {\n    return false; // unparsable is not \"external http\" — caller's default wins\n  }\n  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;\n  return parsed.origin !== appOrigin;\n}\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/ipc.ts",
+        "content": "import { ipcMain, type IpcMainInvokeEvent } from 'electron';\n\n/**\n * Registers an IPC handler that only runs for senders belonging to this\n * app's own window tree. Every future channel must be registered through\n * this, never through `ipcMain.handle` directly — see electron/security.md.\n */\nexport function registerHandler(\n  channel: string,\n  isTrustedSender: (event: IpcMainInvokeEvent) => boolean,\n  handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown\n): void {\n  ipcMain.handle(channel, (event, ...args) => {\n    if (!isTrustedSender(event)) {\n      throw new Error(`Rejected IPC call on \"${channel}\" from an untrusted sender.`);\n    }\n    return handler(event, ...args);\n  });\n}\n{{#if includeSettings}}\n\n/**\n * Tracks which webContents belong to this app's own window tree, so\n * every registerHandler() call above can validate its sender.\n */\nconst trustedWebContentsIds = new Set<number>();\n\nexport function trustWebContents(id: number): void {\n  trustedWebContentsIds.add(id);\n}\n\nexport function untrustWebContents(id: number): void {\n  trustedWebContentsIds.delete(id);\n}\n\nexport function isTrustedSender(event: IpcMainInvokeEvent): boolean {\n  return trustedWebContentsIds.has(event.sender.id);\n}\n{{else}}{{#if includeSkins}}\n/**\n * Tracks which webContents belong to this app's own window tree, so\n * every registerHandler() call above can validate its sender.\n */\nconst trustedWebContentsIds = new Set<number>();\n\nexport function trustWebContents(id: number): void {\n  trustedWebContentsIds.add(id);\n}\n\nexport function untrustWebContents(id: number): void {\n  trustedWebContentsIds.delete(id);\n}\n\nexport function isTrustedSender(event: IpcMainInvokeEvent): boolean {\n  return trustedWebContentsIds.has(event.sender.id);\n}\n{{/if}}{{/if}}"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/atomicWriteFile.ts",
+        "content": "import { randomBytes } from 'node:crypto';\nimport { rename, writeFile } from 'node:fs/promises';\nimport { dirname, join } from 'node:path';\n\n/**\n * Atomically replaces `targetPath`'s content: writes to a sibling temp\n * file, then renames it over the target.\n */\nexport async function atomicWriteFile(targetPath: string, content: string): Promise<void> {\n  const tempPath = join(dirname(targetPath), `.${randomBytes(6).toString('hex')}.tmp`);\n  await writeFile(tempPath, content, 'utf8');\n  await rename(tempPath, targetPath);\n}\n"
+      },
+      "when": {
+        "or": [
+          {
+            "var": "includeSettings"
+          },
+          {
+            "var": "includeSkins"
+          }
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/staticWindowShell.ts",
+        "content": "import { createHash } from 'node:crypto';\n\n/** Escapes free text for safe placement inside an HTML text node. */\nexport function escapeHtml(value: string): string {\n  return value\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/\\'/g, '&#39;');\n}\n\n/**\n * Builds the <meta http-equiv=\"Content-Security-Policy\"> tag for a\n * static, non-interactive window (About/Help) — delivered via a <meta>\n * tag, never an HTTP header, since there is no HTTP response for a\n * `data:` URL to attach one to (electron/security.md's \"Static-window\n * CSP\" section). The style-src hash is derived from the exact inline\n * <style> CSS passed in, so the policy can never drift from the content\n * it actually guards.\n */\nexport function buildStaticWindowCsp(inlineStyleCss: string): string {\n  const hash = createHash('sha256').update(inlineStyleCss, 'utf8').digest('base64');\n  const policy = [\n    \"default-src 'none'\",\n    `style-src 'sha256-${hash}'`,\n    \"script-src 'none'\",\n    \"base-uri 'none'\",\n    \"form-action 'none'\",\n  ].join('; ');\n  return `<meta http-equiv=\"Content-Security-Policy\" content=\"${policy}\" />`;\n}\n"
+      },
+      "when": {
+        "var": "includeAboutHelp"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/settings.ts",
+        "content": "import { z } from 'zod';\n\nexport const ViewSettingsSchema = z\n  .object({\n    darkMode: z.boolean(),\n  })\n  .strict();\n\nexport type ViewSettings = z.infer<typeof ViewSettingsSchema>;\n\nexport const DEFAULT_VIEW_SETTINGS: ViewSettings = {\n  darkMode: false,\n};\n"
+      },
+      "when": {
+        "var": "includeSettings"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/settingsStore.ts",
+        "content": "import { join } from 'node:path';\nimport { readFile } from 'node:fs/promises';\nimport { app } from 'electron';\nimport { atomicWriteFile } from './atomicWriteFile.js';\nimport { registerHandler, isTrustedSender } from './ipc.js';\nimport { ViewSettingsSchema, DEFAULT_VIEW_SETTINGS, type ViewSettings } from './settings.js';\n\nexport const SETTINGS_CHANNELS = {\n  get: '{{packageName}}:settings:get',\n  set: '{{packageName}}:settings:set',\n  changed: '{{packageName}}:settings:changed',\n} as const;\n\nconst SETTINGS_PATH = (): string => join(app.getPath('userData'), 'settings.json');\n\nlet current: ViewSettings = DEFAULT_VIEW_SETTINGS;\nconst listeners = new Set<(settings: ViewSettings) => void>();\n\nasync function readAndValidate(): Promise<ViewSettings | undefined> {\n  let raw: string;\n  try {\n    raw = await readFile(SETTINGS_PATH(), 'utf8');\n  } catch {\n    return undefined; // missing file -> caller keeps in-memory defaults, writes nothing\n  }\n  let json: unknown;\n  try {\n    json = JSON.parse(raw);\n  } catch {\n    return undefined; // corrupt (invalid JSON) -> self-heal, no backup\n  }\n  const parsed = ViewSettingsSchema.safeParse(json);\n  return parsed.success ? parsed.data : undefined; // corrupt (wrong shape) -> self-heal, no backup\n}\n\nexport async function loadSettingsAtStartup(): Promise<void> {\n  current = (await readAndValidate()) ?? DEFAULT_VIEW_SETTINGS;\n}\n\n/** Re-reads on window focus; a failed read never touches `current`. */\nexport async function rereadSettingsOnFocus(): Promise<void> {\n  const next = await readAndValidate();\n  if (next !== undefined) {\n    current = next;\n    listeners.forEach((listener) => listener(current));\n  }\n}\n\nexport function getSettings(): ViewSettings {\n  return current;\n}\n\nexport async function setSettings(patch: Partial<ViewSettings>): Promise<ViewSettings> {\n  current = ViewSettingsSchema.parse({ ...current, ...patch });\n  await atomicWriteFile(SETTINGS_PATH(), `${JSON.stringify(current, null, 2)}\\n`);\n  listeners.forEach((listener) => listener(current));\n  return current;\n}\n\nexport function onSettingsChange(listener: (settings: ViewSettings) => void): () => void {\n  listeners.add(listener);\n  return () => listeners.delete(listener);\n}\n\nexport function registerSettingsIpcHandlers(): void {\n  registerHandler(SETTINGS_CHANNELS.get, isTrustedSender, () => getSettings());\n  registerHandler(SETTINGS_CHANNELS.set, isTrustedSender, (_event, patch) =>\n    setSettings(patch as Partial<ViewSettings>)\n  );\n}\n"
+      },
+      "when": {
+        "var": "includeSettings"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/skins.ts",
+        "content": "import { z } from 'zod';\n\nexport const SkinSchema = z\n  .object({\n    name: z.string().min(1),\n    css: z.string(),\n  })\n  .strict();\n\nexport const SkinsFileSchema = z\n  .object({\n    skins: z.array(SkinSchema),\n  })\n  .strict();\n\nexport type Skin = z.infer<typeof SkinSchema>;\nexport type SkinsFile = z.infer<typeof SkinsFileSchema>;\n\n// Zero presets — a freshly scaffolded app has no visual identity of its own yet.\nexport const DEFAULT_SKINS_FILE: SkinsFile = { skins: [] };\n"
+      },
+      "when": {
+        "var": "includeSkins"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/skinsStore.ts",
+        "content": "import { join } from 'node:path';\nimport { copyFile, readFile } from 'node:fs/promises';\nimport { app } from 'electron';\nimport { atomicWriteFile } from './atomicWriteFile.js';\nimport { registerHandler, isTrustedSender } from './ipc.js';\nimport { SkinsFileSchema, DEFAULT_SKINS_FILE, type Skin, type SkinsFile } from './skins.js';\n\nexport const SKINS_CHANNELS = {\n  list: '{{packageName}}:skins:list',\n  getActive: '{{packageName}}:skins:getActive',\n  setActive: '{{packageName}}:skins:setActive',\n  changed: '{{packageName}}:skins:onChange',\n} as const;\n\nexport const SKINS_PATH = (): string => join(app.getPath('userData'), 'skins.json');\n\nlet current: SkinsFile = DEFAULT_SKINS_FILE;\n// Intentionally in-memory-only (not part of SkinsFileSchema/skins.json):\n// the active skin selection resets to none on every relaunch.\nlet activeSkinName: string | undefined;\nconst listeners = new Set<(skins: Skin[]) => void>();\n\nasync function readAndValidate(): Promise<SkinsFile | undefined> {\n  let raw: string;\n  try {\n    raw = await readFile(SKINS_PATH(), 'utf8');\n  } catch {\n    return undefined; // missing file -> caller keeps in-memory defaults, writes nothing\n  }\n  let json: unknown;\n  try {\n    json = JSON.parse(raw);\n  } catch {\n    // corrupt (invalid JSON) -> back up the user-authored content before self-healing\n    await copyFile(SKINS_PATH(), `${SKINS_PATH()}.bak`);\n    return undefined;\n  }\n  const parsed = SkinsFileSchema.safeParse(json);\n  if (parsed.success) return parsed.data;\n  // corrupt (wrong shape) -> back up the user-authored content before self-healing\n  await copyFile(SKINS_PATH(), `${SKINS_PATH()}.bak`);\n  return undefined;\n}\n\nexport async function loadSkinsAtStartup(): Promise<void> {\n  current = (await readAndValidate()) ?? DEFAULT_SKINS_FILE;\n}\n\n/** Re-reads on window focus; a failed read never touches `current`. */\nexport async function rereadSkinsOnFocus(): Promise<void> {\n  const next = await readAndValidate();\n  if (next !== undefined) {\n    current = next;\n    listeners.forEach((listener) => listener(current.skins));\n  }\n}\n\nexport function getSkins(): SkinsFile {\n  return current;\n}\n\nexport async function setSkins(skins: Skin[]): Promise<SkinsFile> {\n  current = SkinsFileSchema.parse({ skins });\n  await atomicWriteFile(SKINS_PATH(), `${JSON.stringify(current, null, 2)}\\n`);\n  listeners.forEach((listener) => listener(current.skins));\n  return current;\n}\n\nexport function getActiveSkinName(): string | undefined {\n  return activeSkinName;\n}\n\nexport function setActiveSkinName(name: string): void {\n  if (!current.skins.some((skin) => skin.name === name)) {\n    throw new Error(`Unknown skin \"${name}\"`);\n  }\n  activeSkinName = name;\n  listeners.forEach((listener) => listener(current.skins));\n}\n\nexport function onSkinsChange(listener: (skins: Skin[]) => void): () => void {\n  listeners.add(listener);\n  return () => listeners.delete(listener);\n}\n\nexport function registerSkinsIpcHandlers(): void {\n  registerHandler(SKINS_CHANNELS.list, isTrustedSender, () => getSkins().skins);\n  registerHandler(SKINS_CHANNELS.getActive, isTrustedSender, () => getActiveSkinName());\n  registerHandler(SKINS_CHANNELS.setActive, isTrustedSender, (_event, name) => {\n    if (typeof name !== 'string') {\n      throw new Error('skins:setActive requires a string skin name');\n    }\n    setActiveSkinName(name);\n  });\n}\n"
+      },
+      "when": {
+        "var": "includeSkins"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "third-party-notices.json",
+        "content": "[]\n"
+      },
+      "when": {
+        "var": "includeAboutHelp"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "help.md",
+        "content": "# Help\n\nAdd your app's help content here.\n"
+      },
+      "when": {
+        "var": "includeAboutHelp"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/aboutWindow.ts",
+        "content": "import { readFileSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { app, BrowserWindow } from 'electron';\nimport { staticWindowOptions } from './windowConfig.js';\nimport { buildStaticWindowCsp, escapeHtml } from './staticWindowShell.js';\n\ninterface PackageMetadata {\n  productName?: string;\n  name?: string;\n  version?: string;\n  description?: string;\n  author?: string;\n}\n\ninterface ThirdPartyNotice {\n  name: string;\n  version: string;\n  license: string;\n}\n\nconst STYLE_CSS = [\n  'body { font-family: system-ui, sans-serif; margin: 2rem; }',\n  'h1 { font-size: 1.25rem; }',\n  'dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }',\n].join('\\n');\n\nfunction readOwnPackageJson(): PackageMetadata {\n  const raw = readFileSync(join(app.getAppPath(), 'package.json'), 'utf8');\n  return JSON.parse(raw) as PackageMetadata;\n}\n\nfunction readThirdPartyNotices(): ThirdPartyNotice[] {\n  try {\n    const raw = readFileSync(join(app.getAppPath(), 'third-party-notices.json'), 'utf8');\n    const parsed: unknown = JSON.parse(raw);\n    return Array.isArray(parsed) ? (parsed as ThirdPartyNotice[]) : [];\n  } catch {\n    return [];\n  }\n}\n\nfunction renderNoticesHtml(notices: ThirdPartyNotice[]): string {\n  if (notices.length === 0) {\n    return '<p>No third-party dependencies are listed yet.</p>';\n  }\n  const items = notices\n    .map((n) => `<li>${escapeHtml(n.name)} ${escapeHtml(n.version)} — ${escapeHtml(n.license)}</li>`)\n    .join('\\n');\n  return `<ul>${items}</ul>`;\n}\n\nfunction buildAboutHtml(): string {\n  const pkg = readOwnPackageJson();\n  const notices = readThirdPartyNotices();\n  const appName = escapeHtml(pkg.productName ?? pkg.name ?? 'This app');\n  const version = escapeHtml(pkg.version ?? '0.0.0');\n  const description = escapeHtml(pkg.description ?? '');\n  const authorRow = pkg.author ? `<dt>Author</dt><dd>${escapeHtml(pkg.author)}</dd>` : '';\n  return [\n    '<!doctype html>',\n    '<html>',\n    '<head>',\n    '<meta charset=\"utf-8\" />',\n    buildStaticWindowCsp(STYLE_CSS),\n    `<title>About ${appName}</title>`,\n    `<style>${STYLE_CSS}</style>`,\n    '</head>',\n    '<body>',\n    `<h1>${appName}</h1>`,\n    `<p>${description}</p>`,\n    '<dl>',\n    `<dt>Version</dt><dd>${version}</dd>`,\n    authorRow,\n    '</dl>',\n    '<h2>Third-party software</h2>',\n    renderNoticesHtml(notices),\n    '</body>',\n    '</html>',\n  ].join('\\n');\n}\n\nlet aboutWindow: BrowserWindow | undefined;\n\nexport function openAboutWindow(): void {\n  if (aboutWindow) {\n    aboutWindow.focus();\n    return;\n  }\n  const window = new BrowserWindow(staticWindowOptions());\n  window.setMenu(null);\n  aboutWindow = window;\n  window.on('closed', () => {\n    aboutWindow = undefined;\n  });\n  window.loadURL(`data:text/html,${encodeURIComponent(buildAboutHtml())}`).catch((error: unknown) => {\n    console.error('Failed to load About window', error);\n  });\n}\n\nexport function closeAboutWindow(): void {\n  aboutWindow?.close();\n}\n"
+      },
+      "when": {
+        "var": "includeAboutHelp"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/helpWindow.ts",
+        "content": "import { readFileSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { app, BrowserWindow } from 'electron';\nimport { staticWindowOptions } from './windowConfig.js';\nimport { buildStaticWindowCsp, escapeHtml } from './staticWindowShell.js';\n\nconst STYLE_CSS = [\n  'body { font-family: system-ui, sans-serif; margin: 2rem; }',\n  'pre { white-space: pre-wrap; font-family: inherit; }',\n].join('\\n');\n\nfunction readHelpText(): string {\n  try {\n    return readFileSync(join(app.getAppPath(), 'help.md'), 'utf8');\n  } catch {\n    return '';\n  }\n}\n\nfunction buildHelpHtml(): string {\n  const text = escapeHtml(readHelpText());\n  return [\n    '<!doctype html>',\n    '<html>',\n    '<head>',\n    '<meta charset=\"utf-8\" />',\n    buildStaticWindowCsp(STYLE_CSS),\n    '<title>Help</title>',\n    `<style>${STYLE_CSS}</style>`,\n    '</head>',\n    '<body>',\n    `<pre>${text}</pre>`,\n    '</body>',\n    '</html>',\n  ].join('\\n');\n}\n\nlet helpWindow: BrowserWindow | undefined;\n\nexport function openHelpWindow(): void {\n  if (helpWindow) {\n    helpWindow.focus();\n    return;\n  }\n  const window = new BrowserWindow(staticWindowOptions());\n  window.setMenu(null);\n  helpWindow = window;\n  window.on('closed', () => {\n    helpWindow = undefined;\n  });\n  window.loadURL(`data:text/html,${encodeURIComponent(buildHelpHtml())}`).catch((error: unknown) => {\n    console.error('Failed to load Help window', error);\n  });\n}\n\nexport function closeHelpWindow(): void {\n  helpWindow?.close();\n}\n"
+      },
+      "when": {
+        "var": "includeAboutHelp"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/menu.ts",
+        "content": "import { Menu, shell, type MenuItemConstructorOptions } from 'electron';\n{{#if includeSettings}}import { getSettings, setSettings } from './settingsStore.js';\n{{/if}}{{#if includeSkins}}import { getActiveSkinName, getSkins, setActiveSkinName, SKINS_PATH } from './skinsStore.js';\n{{/if}}{{#if includeAboutHelp}}import { openAboutWindow } from './aboutWindow.js';\nimport { openHelpWindow } from './helpWindow.js';\n{{/if}}\n\n{{#if includeSkins}}// Active skin selection is in-memory-only and resets on relaunch (see skinsStore.ts).\nfunction buildSkinSubmenu(): MenuItemConstructorOptions[] {\n  const activeSkinName = getActiveSkinName();\n  return getSkins().skins.map((skin) => ({\n    label: skin.name,\n    type: 'checkbox' as const,\n    checked: skin.name === activeSkinName,\n    click: () => setActiveSkinName(skin.name),\n  }));\n}\n\n{{/if}}export function buildMenuTemplate(): MenuItemConstructorOptions[] {\n  const fileItems: MenuItemConstructorOptions[] = [{ label: 'Exit', role: 'quit' }];\n\n{{#if includeSettings}}  const viewItems: MenuItemConstructorOptions[] = [];\n  viewItems.push(\n    {\n      label: 'Dark Mode',\n      type: 'checkbox',\n      checked: getSettings().darkMode,\n      click: () => {\n        void setSettings({ darkMode: !getSettings().darkMode });\n      },\n    }\n  );\n{{#if includeSkins}}  viewItems.push(\n    { label: 'Skin', submenu: buildSkinSubmenu() },\n    {\n      label: 'Edit Skins…',\n      click: () => {\n        void shell.openPath(SKINS_PATH());\n      },\n    }\n  );\n{{/if}}\n\n{{else}}{{#if includeSkins}}  const viewItems: MenuItemConstructorOptions[] = [];\n  viewItems.push(\n    { label: 'Skin', submenu: buildSkinSubmenu() },\n    {\n      label: 'Edit Skins…',\n      click: () => {\n        void shell.openPath(SKINS_PATH());\n      },\n    }\n  );\n\n{{/if}}{{/if}}{{#if includeAboutHelp}}  const helpItems: MenuItemConstructorOptions[] = [\n    { label: 'Help', click: () => openHelpWindow() },\n    { label: 'About', click: () => openAboutWindow() },\n  ];\n\n{{/if}}  const template: MenuItemConstructorOptions[] = [{ label: 'File', submenu: fileItems }];\n{{#if includeSettings}}  if (viewItems.length > 0) {\n    template.push({ label: 'View', submenu: viewItems });\n  }\n{{else}}{{#if includeSkins}}  if (viewItems.length > 0) {\n    template.push({ label: 'View', submenu: viewItems });\n  }\n{{/if}}{{/if}}{{#if includeAboutHelp}}  if (helpItems.length > 0) {\n    template.push({ label: 'Help', submenu: helpItems });\n  }\n{{/if}}  return template;\n}\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main/index.ts",
+        "content": "import { join } from 'node:path';\nimport { pathToFileURL } from 'node:url';\nimport { app, BrowserWindow, Menu, shell } from 'electron';\nimport { isExternalHttpUrl } from './linkPolicy.js';\nimport { secureWebPreferences } from './windowConfig.js';\nimport { buildMenuTemplate } from './menu.js';\n{{#if includeSettings}}import { trustWebContents, untrustWebContents } from './ipc.js';\n{{else}}{{#if includeSkins}}import { trustWebContents, untrustWebContents } from './ipc.js';\n{{/if}}{{/if}}{{#if includeAboutHelp}}import { closeAboutWindow } from './aboutWindow.js';\nimport { closeHelpWindow } from './helpWindow.js';\n{{/if}}{{#if includeSettings}}import {\n  SETTINGS_CHANNELS,\n  loadSettingsAtStartup,\n  onSettingsChange,\n  registerSettingsIpcHandlers,\n  rereadSettingsOnFocus,\n} from './settingsStore.js';\n{{/if}}{{#if includeSkins}}import {\n  SKINS_CHANNELS,\n  loadSkinsAtStartup,\n  onSkinsChange,\n  registerSkinsIpcHandlers,\n  rereadSkinsOnFocus,\n} from './skinsStore.js';\n{{/if}}\n\n{{#if includeSettings}}registerSettingsIpcHandlers();\n\n{{/if}}{{#if includeSkins}}registerSkinsIpcHandlers();\n\n{{/if}}// Composition root: app lifecycle + window creation only. Paths assume the\n// compiled layout dist/main, dist/preload and dist/renderer.\nconst PRELOAD_PATH = join(__dirname, '..', 'preload', 'index.js');\nconst RENDERER_URL = pathToFileURL(join(__dirname, '..', 'renderer', 'index.html'));\n\n/**\n * Derived from how the renderer is loaded, not hardcoded: a file:// URL has\n * the opaque origin \"null\", so every http(s) URL counts as external. If the\n * renderer is ever served over http(s) instead, derive this from that URL.\n */\nconst APP_ORIGIN = RENDERER_URL.origin;\n\nfunction openExternally(url: string): void {\n  shell.openExternal(url).catch((error: unknown) => {\n    console.error('Failed to open external URL', url, error);\n  });\n}\n\napp.on('web-contents-created', (_event, contents) => {\n  // The shell has no in-app navigation: block every attempt, and hand\n  // external http(s) links to the OS browser.\n  contents.on('will-navigate', (event) => {\n    event.preventDefault();\n    if (isExternalHttpUrl(event.url, APP_ORIGIN)) {\n      openExternally(event.url);\n    }\n  });\n  contents.setWindowOpenHandler(({ url }) => {\n    if (isExternalHttpUrl(url, APP_ORIGIN)) {\n      openExternally(url);\n    }\n    return { action: 'deny' };\n  });\n});\n\nfunction createWindow(): void {\n  const window = new BrowserWindow({\n    width: 1024,\n    height: 768,\n    show: false,\n    webPreferences: secureWebPreferences(PRELOAD_PATH),\n  });\n  window.once('ready-to-show', () => window.show());\n  window.loadURL(RENDERER_URL.href).catch((error: unknown) => {\n    console.error('Failed to load renderer', error);\n  });\n{{#if includeSettings}}\n\n  const windowId = window.webContents.id;\n  trustWebContents(windowId);\n{{else if includeSkins}}\n\n  const windowId = window.webContents.id;\n  trustWebContents(windowId);\n{{/if}}{{#if includeSettings}}\n  window.on('focus', () => {\n    rereadSettingsOnFocus().catch((error: unknown) => {\n      console.error('Failed to reread settings', error);\n    });\n  });\n  const unsubscribeSettingsChange = onSettingsChange((settings) => {\n    window.webContents.send(SETTINGS_CHANNELS.changed, settings);\n  });\n{{/if}}{{#if includeSkins}}\n  window.on('focus', () => {\n    rereadSkinsOnFocus().catch((error: unknown) => {\n      console.error('Failed to reread skins', error);\n    });\n  });\n  const unsubscribeSkinsChange = onSkinsChange((skins) => {\n    window.webContents.send(SKINS_CHANNELS.changed, skins);\n  });\n{{/if}}{{#if includeSettings}}\n  window.on('closed', () => {\n    untrustWebContents(windowId);\n    unsubscribeSettingsChange();\n{{#if includeSkins}}    unsubscribeSkinsChange();\n{{/if}}{{#if includeAboutHelp}}    closeAboutWindow();\n    closeHelpWindow();\n{{/if}}  });\n{{else if includeSkins}}\n\n  window.on('closed', () => {\n    untrustWebContents(windowId);\n    unsubscribeSkinsChange();\n{{#if includeAboutHelp}}    closeAboutWindow();\n    closeHelpWindow();\n{{/if}}  });\n{{else if includeAboutHelp}}\n\n  window.on('closed', () => {\n    closeAboutWindow();\n    closeHelpWindow();\n  });\n{{/if}}\n}\n\napp.on('window-all-closed', () => {\n  if (process.platform !== 'darwin') app.quit();\n});\n\napp\n  .whenReady()\n  .then(async () => {\n    Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate()));\n{{#if includeSettings}}    await loadSettingsAtStartup();\n{{/if}}{{#if includeSkins}}    await loadSkinsAtStartup();\n{{/if}}    createWindow();\n    app.on('activate', () => {\n      if (BrowserWindow.getAllWindows().length === 0) createWindow();\n    });\n  })\n  .catch((error: unknown) => {\n    console.error('Failed to start', error);\n    app.quit();\n  });\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/preload/api.ts",
+        "content": "{{#if includeSettings}}import type { ViewSettings } from '../main/settings.js';\n{{/if}}{{#if includeSkins}}import type { Skin } from '../main/skins.js';\n{{/if}}{{#if includeSettings}}\n{{else}}{{#if includeSkins}}\n{{/if}}{{/if}}/**\n * The complete, enumerable surface between renderer and main process.\n * There are zero channels today; the bridge still exists and stays narrow.\n * To add an operation: one entry here named\n * `{{packageName}}:<operation>`, one method on BridgeApi, and a main-process\n * handler registered through `registerHandler()` (`src/main/ipc.ts`),\n * which validates the event sender before acting. Never expose ipcRenderer\n * itself or a wildcard channel.\n */\n{{#if includeSettings}}export const IPC_CHANNELS = {\n  settingsGet: '{{packageName}}:settings:get',\n  settingsSet: '{{packageName}}:settings:set',\n  settingsChanged: '{{packageName}}:settings:changed',\n{{#if includeSkins}}  skinsList: '{{packageName}}:skins:list',\n  skinsGetActive: '{{packageName}}:skins:getActive',\n  skinsSetActive: '{{packageName}}:skins:setActive',\n  skinsChanged: '{{packageName}}:skins:onChange',\n{{/if}}\n} as const satisfies Record<string, string>;\n{{else}}{{#if includeSkins}}export const IPC_CHANNELS = {\n  skinsList: '{{packageName}}:skins:list',\n  skinsGetActive: '{{packageName}}:skins:getActive',\n  skinsSetActive: '{{packageName}}:skins:setActive',\n  skinsChanged: '{{packageName}}:skins:onChange',\n} as const satisfies Record<string, string>;\n{{else}}export const IPC_CHANNELS = {} as const satisfies Record<string, string>;\n{{/if}}{{/if}}\n{{#if includeSettings}}export interface BridgeApi {\n  settings: {\n    get(): Promise<ViewSettings>;\n    set(patch: Partial<ViewSettings>): Promise<ViewSettings>;\n    onChange(callback: (settings: ViewSettings) => void): () => void;\n  };\n{{#if includeSkins}}  skins: {\n    list(): Promise<Skin[]>;\n    getActive(): Promise<string | undefined>;\n    setActive(name: string): Promise<void>;\n    onChange(callback: (skins: Skin[]) => void): () => void;\n  };\n{{/if}}\n}\n{{else}}{{#if includeSkins}}export interface BridgeApi {\n  skins: {\n    list(): Promise<Skin[]>;\n    getActive(): Promise<string | undefined>;\n    setActive(name: string): Promise<void>;\n    onChange(callback: (skins: Skin[]) => void): () => void;\n  };\n}\n{{else}}// Zero methods today; extended per channel, never wildcarded.\nexport interface BridgeApi {}\n{{/if}}{{/if}}"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/preload/index.ts",
+        "content": "{{#if includeSettings}}import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';\nimport { IPC_CHANNELS, type BridgeApi } from './api.js';\n{{else}}{{#if includeSkins}}import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';\nimport { IPC_CHANNELS, type BridgeApi } from './api.js';\n{{else}}import { contextBridge } from 'electron';\nimport type { BridgeApi } from './api.js';\n{{/if}}{{/if}}{{#if includeSettings}}import type { ViewSettings } from '../main/settings.js';\n{{/if}}{{#if includeSkins}}import type { Skin } from '../main/skins.js';\n{{/if}}\n\n{{#if includeSettings}}const api: BridgeApi = {\n  settings: {\n    get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet) as Promise<ViewSettings>,\n    set: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsSet, patch) as Promise<ViewSettings>,\n    onChange: (callback) => {\n      const listener = (_event: IpcRendererEvent, settings: ViewSettings) => callback(settings);\n      ipcRenderer.on(IPC_CHANNELS.settingsChanged, listener);\n      return () => ipcRenderer.removeListener(IPC_CHANNELS.settingsChanged, listener);\n    },\n  },\n{{#if includeSkins}}  skins: {\n    list: () => ipcRenderer.invoke(IPC_CHANNELS.skinsList) as Promise<Skin[]>,\n    getActive: () => ipcRenderer.invoke(IPC_CHANNELS.skinsGetActive) as Promise<string | undefined>,\n    setActive: (name) => ipcRenderer.invoke(IPC_CHANNELS.skinsSetActive, name) as Promise<void>,\n    onChange: (callback) => {\n      const listener = (_event: IpcRendererEvent, skins: Skin[]) => callback(skins);\n      ipcRenderer.on(IPC_CHANNELS.skinsChanged, listener);\n      return () => ipcRenderer.removeListener(IPC_CHANNELS.skinsChanged, listener);\n    },\n  },\n{{/if}}\n};\n{{else}}{{#if includeSkins}}const api: BridgeApi = {\n  skins: {\n    list: () => ipcRenderer.invoke(IPC_CHANNELS.skinsList) as Promise<Skin[]>,\n    getActive: () => ipcRenderer.invoke(IPC_CHANNELS.skinsGetActive) as Promise<string | undefined>,\n    setActive: (name) => ipcRenderer.invoke(IPC_CHANNELS.skinsSetActive, name) as Promise<void>,\n    onChange: (callback) => {\n      const listener = (_event: IpcRendererEvent, skins: Skin[]) => callback(skins);\n      ipcRenderer.on(IPC_CHANNELS.skinsChanged, listener);\n      return () => ipcRenderer.removeListener(IPC_CHANNELS.skinsChanged, listener);\n    },\n  },\n};\n{{else}}const api: BridgeApi = {};\n{{/if}}{{/if}}\ncontextBridge.exposeInMainWorld('{{bridgeGlobal}}', api);\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/renderer/index.html",
+        "content": "<!doctype html>\n<html>\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>{{appName}}</title>\n    <link rel=\"stylesheet\" href=\"./app.css\" />\n  </head>\n  <body>\n    <main>\n      <h1>{{appName}}</h1>\n      <p>{{description}}</p>\n    </main>\n{{#if includeSettings}}    <script type=\"module\" src=\"./theme.js\"></script>\n{{/if}}{{#if includeSkins}}    <script type=\"module\" src=\"./skins.js\"></script>\n{{/if}}  </body>\n</html>\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/renderer/app.css",
+        "content": "html, body {\n  height: 100%;\n  margin: 0;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-family: system-ui, sans-serif;\n  text-align: center;\n}\n{{#if includeSettings}}\n\nhtml.theme-dark, body.theme-dark {\n  background: #1e1e1e;\n  color: #f0f0f0;\n}\n{{/if}}"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/renderer/theme.ts",
+        "content": "import type { BridgeApi } from '../preload/api.js';\n\ndeclare global {\n  interface Window {\n    {{bridgeGlobal}}: BridgeApi;\n  }\n}\n\nconst bridge = window.{{bridgeGlobal}};\n\nfunction applyTheme(darkMode: boolean): void {\n  document.documentElement.classList.toggle('theme-dark', darkMode);\n}\n\nvoid bridge.settings.get().then((settings) => applyTheme(settings.darkMode));\nbridge.settings.onChange((settings) => applyTheme(settings.darkMode));\n"
+      },
+      "when": {
+        "var": "includeSettings"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/renderer/skins.ts",
+        "content": "import type { BridgeApi } from '../preload/api.js';\n\ndeclare global {\n  interface Window {\n    {{bridgeGlobal}}: BridgeApi;\n  }\n}\n\nconst bridge = window.{{bridgeGlobal}};\n\nfunction styleTag(): HTMLStyleElement {\n  let tag = document.getElementById('skin') as HTMLStyleElement | null;\n  if (!tag) {\n    tag = document.createElement('style');\n    tag.id = 'skin';\n    document.head.appendChild(tag);\n  }\n  return tag;\n}\n\nasync function applyActiveSkin(): Promise<void> {\n  const [skins, activeName] = await Promise.all([bridge.skins.list(), bridge.skins.getActive()]);\n  const active = skins.find((skin) => skin.name === activeName);\n  styleTag().textContent = active?.css ?? '';\n}\n\nvoid applyActiveSkin();\nbridge.skins.onChange(() => void applyActiveSkin());\n"
+      },
+      "when": {
+        "var": "includeSkins"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "scripts/build.mjs",
+        "content": "#!/usr/bin/env node\nimport { execSync } from 'node:child_process';\nimport { cpSync, mkdirSync } from 'node:fs';\nimport { dirname } from 'node:path';\nimport { build as esbuildBuild } from 'esbuild';\n\n{{#if includeSettings}}execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });\n\nexecSync('tsc -p tsconfig.renderer.json', { stdio: 'inherit' });{{else}}{{#if includeSkins}}execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });\n\nexecSync('tsc -p tsconfig.renderer.json', { stdio: 'inherit' });{{else}}execSync('tsc -p tsconfig.json', { stdio: 'inherit' });{{/if}}{{/if}}\n\nawait esbuildBuild({\n  entryPoints: ['src/preload/index.ts'],\n  outfile: 'dist/preload/index.js',\n  bundle: true,\n  platform: 'node',\n  format: 'cjs', // required: sandbox: true loads the preload as CJS\n  external: ['electron'],\n});\n\n// Explicit asset manifest (handoff debt item #1) — add an entry here,\n// never a bare `cp -r` in package.json, when renderer assets grow.\nconst ASSETS = [\n  ['src/renderer/index.html', 'dist/renderer/index.html'],\n  ['src/renderer/app.css', 'dist/renderer/app.css'],\n];\nfor (const [from, to] of ASSETS) {\n  mkdirSync(dirname(to), { recursive: true });\n  cpSync(from, to);\n}\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "electron-builder.yml",
+        "content": "appId: \"com.{{packageName}}.app\"\nproductName: \"{{appName}}\"\ndirectories:\n  output: release\nfiles:\n  - dist/**\n{{#if includeAboutHelp}}  - third-party-notices.json\n  - help.md\n{{/if}}win:\n  target:\n    - nsis\n    - portable\npublish: null\n",
+        "jsonEscapeKeys": [
+          "appName"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "playwright.config.ts",
+        "content": "import { defineConfig } from '@playwright/test';\n\nexport default defineConfig({\n  testDir: './tests/e2e',\n  testMatch: '**/*.spec.ts',\n  // Capped at 2: running more concurrent Electron processes caused\n  // intermittent hard worker-process crashes on Windows (fastfail, exit code\n  // 3221226505) under the CPU-count default. Measured mitigation; root cause\n  // not isolated. Revisit if it ever gets its own investigation.\n  workers: 2,\n});\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tests/e2e/support/fixtures.ts",
+        "content": "import { existsSync, mkdtempSync, rmSync } from 'node:fs';\nimport { tmpdir } from 'node:os';\nimport { join } from 'node:path';\nimport { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';\n\n// The generated package.json has no \"type\": \"module\", so this file runs as\n// CommonJS under Playwright's TS transform and __dirname is available.\nconst REPO_ROOT = join(__dirname, '../../..');\n\nfunction requireBuiltMain(): void {\n  if (!existsSync(join(REPO_ROOT, 'dist/main/index.js'))) {\n    throw new Error('dist/main/index.js is missing — run `npm run build` first.');\n  }\n}\n\n/**\n * electron.launch()'s env option requires string values only (no\n * `undefined`), unlike `process.env` itself. ELECTRON_RUN_AS_NODE is\n * stripped so the launched app runs as a real Electron app, not plain Node.\n */\nfunction launchEnv(): Record<string, string> {\n  const env: Record<string, string> = {};\n  for (const [key, value] of Object.entries(process.env)) {\n    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;\n  }\n  return env;\n}\n\nexport const test = base.extend<{\n  userDataDir: string;\n  electronApp: ElectronApplication;\n  window: Page;\n}>({\n  userDataDir: async ({}, use) => {\n    const dir = mkdtempSync(join(tmpdir(), 'e2e-'));\n    try {\n      await use(dir);\n    } finally {\n      // Windows can briefly hold Chromium files open after the app closes.\n      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });\n    }\n  },\n\n  electronApp: async ({ userDataDir }, use) => {\n    requireBuiltMain();\n    // --user-data-dir= is load-bearing, not cosmetic: electron.launch()\n    // builds argv from `args` only and never reads a `userDataDir` option,\n    // so every run would otherwise share the real, shared profile.\n    const app = await electron.launch({\n      args: [`--user-data-dir=${userDataDir}`, '.'],\n      cwd: REPO_ROOT,\n      env: launchEnv(),\n    });\n    try {\n      await use(app);\n    } finally {\n      await app.close();\n    }\n  },\n\n  window: async ({ electronApp }, use) => {\n    const window = await electronApp.firstWindow();\n    await window.waitForLoadState('domcontentloaded');\n    await use(window);\n  },\n});\n\nexport { expect } from '@playwright/test';\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tests/e2e/support/pollUntilStable.ts",
+        "content": "export interface PollUntilStableOptions {\n  /** Maximum total time to wait, in ms. Default 5000. */\n  timeoutMs?: number;\n  /** Delay between polls, in ms. Default 50. */\n  intervalMs?: number;\n  /** Consecutive identical reads required before considering the value stable. Default 3. */\n  stableCount?: number;\n}\n\nexport async function pollUntilStable<T>(\n  read: () => T | Promise<T>,\n  options: PollUntilStableOptions = {}\n): Promise<T> {\n  const timeoutMs = options.timeoutMs ?? 5000;\n  const intervalMs = options.intervalMs ?? 50;\n  const stableCount = options.stableCount ?? 3;\n  if (stableCount < 1) {\n    throw new Error('pollUntilStable: stableCount must be at least 1');\n  }\n\n  const deadline = Date.now() + timeoutMs;\n  let lastValue: T | undefined;\n  let consecutive = 0;\n\n  for (;;) {\n    const value = await read();\n    consecutive = consecutive > 0 && Object.is(value, lastValue) ? consecutive + 1 : 1;\n    lastValue = value;\n\n    if (consecutive >= stableCount) return value;\n    if (Date.now() >= deadline) {\n      throw new Error(`pollUntilStable: timed out after ${timeoutMs}ms waiting for a stable value`);\n    }\n    await new Promise((resolve) => setTimeout(resolve, intervalMs));\n  }\n}\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tests/unit/pollUntilStable.test.ts",
+        "content": "import { describe, expect, it } from 'vitest';\nimport { pollUntilStable } from '../e2e/support/pollUntilStable.js';\n\ndescribe('pollUntilStable', () => {\n  it('resolves once the same value is read stableCount times in a row', async () => {\n    let i = 0;\n    const read = () => {\n      i += 1;\n      return i < 3 ? i : 3; // settles at 3 from the 3rd read onward\n    };\n    const result = await pollUntilStable(read, { intervalMs: 1, stableCount: 3, timeoutMs: 1000 });\n    expect(result).toBe(3);\n  });\n\n  it('throws once timeoutMs elapses without a stable value', async () => {\n    let i = 0;\n    await expect(\n      pollUntilStable(\n        () => {\n          i += 1;\n          return i;\n        },\n        { intervalMs: 1, stableCount: 2, timeoutMs: 20 }\n      )\n    ).rejects.toThrow(/timed out/);\n  });\n\n  it('rejects a stableCount below 1', async () => {\n    await expect(pollUntilStable(() => 1, { stableCount: 0 })).rejects.toThrow(/stableCount/);\n  });\n\n  it('supports an async read()', async () => {\n    const result = await pollUntilStable(async () => 'done', { stableCount: 2, intervalMs: 1, timeoutMs: 500 });\n    expect(result).toBe('done');\n  });\n});\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tests/e2e/smoke.spec.ts",
+        "content": "import { test, expect } from './support/fixtures.js';\n\nconst BRIDGE_GLOBAL = \"{{bridgeGlobal}}\";\nconst EXPECTED_BRIDGE_KEYS: string[] = [{{#if includeSettings}}\"settings\"{{#if includeSkins}},\"skins\"{{/if}}{{else}}{{#if includeSkins}}\"skins\"{{/if}}{{/if}}];\n\ntest.describe('smoke', () => {\n  test('launches and renders the placeholder', async ({ electronApp, window }) => {\n    expect(electronApp.windows()).toHaveLength(1);\n    const heading = window.locator('h1');\n    await expect(heading).toBeVisible();\n    expect(await heading.textContent()).toBe(await window.title());\n  });\n\n  test('renderer is isolated from Node', async ({ window }) => {\n    const result = await window.evaluate(() => ({\n      hasRequire: typeof (globalThis as Record<string, unknown>)['require'],\n      hasProcess: typeof (globalThis as Record<string, unknown>)['process'],\n      hasModule: typeof (globalThis as Record<string, unknown>)['module'],\n    }));\n    expect(result.hasRequire).toBe('undefined');\n    expect(result.hasProcess).toBe('undefined');\n    expect(result.hasModule).toBe('undefined');\n  });\n\n  test('bridge exposes only the declared surface', async ({ window }) => {\n    const keys = await window.evaluate(\n      (bridgeGlobal) => Object.keys((globalThis as Record<string, unknown>)[bridgeGlobal] ?? {}).sort(),\n      BRIDGE_GLOBAL\n    );\n    expect(keys).toEqual(EXPECTED_BRIDGE_KEYS);\n  });\n\n  test('application menu is installed', async ({ electronApp }) => {\n    const labels = await electronApp.evaluate(({ Menu }) =>\n      (Menu.getApplicationMenu()?.items ?? []).map((item) => item.label)\n    );\n    expect(labels).toContain('File');\n  });\n});\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": ".github/workflows/ci.yml",
+        "content": "name: CI\non:\n  pull_request:\n    branches: [main]\npermissions:\n  contents: read\njobs:\n  verify:\n    runs-on: windows-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n      - run: npm run typecheck\n      - run: npm run build\n      - run: npm test\n      - run: npm run test:e2e\n      - uses: actions/upload-artifact@v7\n        if: failure()\n        with:\n          name: test-results\n          path: test-results/\n          if-no-files-found: ignore\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": ".github/workflows/release.yml",
+        "content": "name: Release\non:\n  push:\n    tags: ['v*.*.*']\npermissions:\n  contents: read\njobs:\n  release:\n    runs-on: windows-latest\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7\n        with:\n          node-version: 24\n          cache: npm\n      - run: npm ci\n      - run: npm run typecheck\n      - run: npm run build\n      - run: npm test\n      - run: npm run test:e2e\n      - run: npx electron-builder --win --publish never\n      - uses: actions/upload-artifact@v7\n        with:\n          name: release\n          path: release/*.exe\n          if-no-files-found: error\n"
+      }
+    },
+    {
+      "action": "gitInit",
+      "params": {}
+    }
+  ],
+  "hooks": {
+    "preInit": [
+      {
+        "action": "deriveAnswer",
+        "params": {
+          "from": "appName",
+          "to": "packageName",
+          "transform": "npm-slug"
+        }
+      },
+      {
+        "action": "deriveAnswer",
+        "params": {
+          "from": "packageName",
+          "to": "bridgeGlobal",
+          "transform": "js-identifier-suffix",
+          "suffix": "Api"
+        }
+      },
+      {
+        "action": "deriveAnswer",
+        "params": {
+          "from": "appName",
+          "to": "year",
+          "transform": "current-year"
+        }
+      }
+    ]
+  }
+}

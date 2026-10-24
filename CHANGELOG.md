@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`dev` script for electron-ts / electron-stackfold** (Task 037): a new
+  `scripts.dev` entry (`npm run build && electron .`) added to both plugin
+  templates' generated `package.json` and documented in their generated
+  `README.md`, letting a developer rebuild and launch the real Electron
+  window with one command instead of invoking `electron` manually or
+  running the full `package` installer flow for a quick manual check.
 - **`plugin-builder` plugin** (Task 034): `stackfold init plugin-builder <dir>`
   scaffolds a brand-new stackfold plugin, authored in the declarative JSON
   `ScaffoldDefinition` format and compiled via `compileScaffold()` — the

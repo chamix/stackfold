@@ -12,3 +12,4 @@ coverage/
 .e2e-playground/
 .manual-test-playground/
 scripts/manual/
+.scratch/
