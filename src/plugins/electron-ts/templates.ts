@@ -136,6 +136,7 @@ function renderPackageJson(ctx: ResolvedContext): string {
     main: 'dist/main/index.js',
     scripts: {
       build: 'node scripts/build.mjs',
+      dev: 'npm run build && electron .',
       package: 'electron-builder',
       typecheck: 'tsc --noEmit -p tsconfig.typecheck.json',
       test: 'vitest run',
@@ -188,6 +189,7 @@ function renderReadme(ctx: ResolvedContext): string {
     '## Scripts',
     '',
     '- `npm run build`: compile TypeScript to `dist/`',
+    '- `npm run dev`: rebuild and launch the app in a real Electron window',
     '- `npm run typecheck`: type-check without emitting',
     '- `npm test`: run the unit tests',
     '- `npm run test:e2e`: launch the real built app with Playwright and run the',
