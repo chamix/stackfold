@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { registerInfoCommand } from './commands/info.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
+import { registerScaffoldSynthCommand } from './commands/scaffoldSynth.js';
 import { defaultGitUserName, NodeFileWriter } from '../infra/fs.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
@@ -77,6 +78,12 @@ registerInfoCommand(program, {
   registry,
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),
+});
+
+registerScaffoldSynthCommand(program, {
+  stdout: (line) => console.log(line),
+  stderr: (line) => console.error(line),
+  cwd: () => process.cwd(),
 });
 
 await program.parseAsync();

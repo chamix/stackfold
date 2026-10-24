@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TS-authored scaffolds + `stackfold scaffold synth <dir>`** (Task 039,
+  SK-ADR-003 Cycle 1): a new `src/authoring/` tooling layer, outside
+  `core/` and built with zero changes to `core/authoring.ts`/`core/
+  types.ts`/`core/ports.ts`. `src/authoring/builder.ts` adds small, typed,
+  CDK-flavored builder functions (`defineScaffold()`, `file()`, `mkdir()`,
+  `runCommand()`, `npmInstall()`, `gitInit()`, `step()`) that return plain
+  data matching the existing `ScaffoldDefinition`/`ActionStep` shapes —
+  `file()`, not `writeFile()`, to avoid reading as a re-implementation of
+  the already-registered `writeFile` action. `src/authoring/
+  templateLoader.ts` adds a shared `loadTemplate(baseDir, relativePath)`
+  that reads a sibling `.hbs` file's raw content from disk, for inlining
+  into a `file()` step's `content`. `src/authoring/synth.ts` adds the
+  `synth()` pipeline: a new top-level zod schema structurally validates
+  the given `ScaffoldDefinition` (no such schema existed before — only
+  per-`ActionKind` schemas inside `compileScaffold()`), then a real smoke
+  test calls `compileScaffold()` *and* the compiled plugin's
+  `buildBlueprint()` (still pure, no disk I/O) with answers synthesized
+  from each question's own default, so an unknown action name or bad step
+  shape fails fast instead of only being caught much later. Only on
+  success is the definition serialized to formatted JSON and written,
+  write-to-temp-then-rename, to the canonical `src/plugins/<id>/
+  scaffold.json` path — never a partial/invalid file on any failure.
+  `src/cli/commands/scaffoldSynth.ts` wires this into a real `stackfold
+  scaffold synth <dir>` subcommand, the one place allowed to load and run
+  the author's own `scaffold.ts` module at command time, via `tsx`'s
+  existing `tsImport()` API (already a devDependency — no new one added).
+  Fragments/namespacing are explicitly out of scope for this cycle (Task
+  041, SK-ADR-003 Cycle 2).
 - **`dev` script for electron-ts / electron-stackfold** (Task 037): a new
   `scripts.dev` entry (`npm run build && electron .`) added to both plugin
   templates' generated `package.json` and documented in their generated
