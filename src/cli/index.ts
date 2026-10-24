@@ -15,7 +15,7 @@ import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
 import { InquirerPrompter } from '../infra/prompter.js';
 // stackfold-plugin-imports:start
-import { compileScaffold } from '../core/authoring.js';
+import { compileScaffold, type ScaffoldDefinition } from '../core/authoring.js';
 import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';
 import { electronTsPlugin } from '../plugins/electron-ts/index.js';
 import { webAppSpaPlugin, webAppStandaloneHtmlPlugin } from '../plugins/web-app/index.js';
@@ -39,6 +39,10 @@ const registry = new StaticPluginRegistry([
   webAppSpaPlugin,
   webAppStandaloneHtmlPlugin,
   compileScaffold(createPluginBuilderDefinition({ gitUserName: defaultGitUserName }), expressionEvaluator),
+  compileScaffold(
+    (await import('../plugins/electron-stackfold/scaffold.json', { with: { type: 'json' } })).default as ScaffoldDefinition,
+    expressionEvaluator
+  ),
   // stackfold-plugin-registry:end
 ]);
 
