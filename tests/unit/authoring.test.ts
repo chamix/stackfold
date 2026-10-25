@@ -808,6 +808,85 @@ describe('built-in action: writeFile (compose)', () => {
       expect(evaluator.calls).toEqual([]);
     });
   });
+
+  // Task 042 review follow-up (review_report.md Blocking #2): `jsEscapeKeys`
+  // escapes the named context values for a single-quoted JS/TS string
+  // literal position before Handlebars renders `content` — mirrors
+  // `jsonEscapeKeys` above exactly, same shape, different escaping target.
+  describe('jsEscapeKeys (Task 042 review follow-up, Blocking item 2)', () => {
+    it('escapes backslashes and single quotes (in that order) for only the named context keys, leaving others untouched', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'scaffold.ts',
+        content: "description: '{{description}}', note: '{{note}}'",
+        jsEscapeKeys: ['description'],
+      });
+
+      const result = kind.resolve(parsed, { description: "It's a thing", note: "untouched 'quote'" });
+
+      expect(result).toEqual({
+        path: 'scaffold.ts',
+        content: "description: 'It\\'s a thing', note: 'untouched 'quote''",
+      });
+    });
+
+    it('escapes a literal backslash before a trailing quote without double-escaping (order matters)', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'scaffold.ts',
+        content: "path: '{{path}}'",
+        jsEscapeKeys: ['path'],
+      });
+
+      const result = kind.resolve(parsed, { path: 'C:\\temp' });
+
+      expect(result).toEqual({ path: 'scaffold.ts', content: "path: 'C:\\\\temp'" });
+    });
+
+    it('omitting jsEscapeKeys (or an empty array) reproduces today\'s behavior exactly — no escaping', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({ path: 'a.txt', content: "Hello {{name}}!" });
+
+      expect(kind.resolve(parsed, { name: "World's" })).toEqual({
+        path: 'a.txt',
+        content: "Hello World's!",
+      });
+    });
+
+    it('never expression-resolves "jsEscapeKeys" — it is always the author\'s own literal list', () => {
+      const def = definition({
+        id: 'write-file-js-escape-literal',
+        steps: [
+          step('writeFile', {
+            path: 'out.ts',
+            content: "x: '{{x}}'",
+            jsEscapeKeys: { var: 'untrustedKeys' },
+          }),
+        ],
+      });
+      const evaluator = new FakeEvaluator();
+
+      expect(() => compileScaffold(def, evaluator).buildBlueprint({ x: "a'b", untrustedKeys: ['x'] })).toThrow();
+      expect(evaluator.calls).toEqual([]);
+    });
+
+    it('composes independently with jsonEscapeKeys: each applies only to its own named keys', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'mixed.txt',
+        content: '{ "json": "{{jsonVal}}" } -- jsString: \'{{jsVal}}\'',
+        jsonEscapeKeys: ['jsonVal'],
+        jsEscapeKeys: ['jsVal'],
+      });
+
+      const result = kind.resolve(parsed, { jsonVal: 'has "quotes"', jsVal: "has 'quotes'" });
+
+      expect(result).toEqual({
+        path: 'mixed.txt',
+        content: '{ "json": "has \\"quotes\\"" } -- jsString: \'has \\\'quotes\\\'\'',
+      });
+    });
+  });
 });
 
 describe('built-in action: runCommand (process)', () => {
@@ -1128,6 +1207,101 @@ describe('built-in action: deriveAnswer (hook) — Task 036', () => {
       await plugin.hooks!.preInit![0]!(fakePorts(), answers);
 
       expect(answers['packageName']).toBe('my-cool-app');
+    });
+  });
+});
+
+// Task 042 (D-B, .agents/specs/042-plugin-builder-ts-authoring.md): a
+// general-purpose "hook" action that runs an external command with the real
+// invoking process's cwd — never `targetDir` — unlike `runCommand` (a
+// `tag:'process'` action, always run with `cwd: targetDir` by
+// `core/orchestrator.ts`'s `runPostActions()`). Exists so a hook (e.g.
+// plugin-builder's own `postInit`) can shell out to `stackfold scaffold
+// synth <dir>` against the repo root it was itself invoked from.
+describe('built-in action: runHookCommand (hook) — Task 042 (D-B)', () => {
+  function runHookCommandKind(): Extract<ActionKind, { tag: 'hook' }> {
+    return resolveAction('runHookCommand') as Extract<ActionKind, { tag: 'hook' }>;
+  }
+
+  it('is registered as a "hook" action with an empty literalKeys (unlike patchFile/deriveAnswer)', () => {
+    const kind = runHookCommandKind();
+    expect(kind.tag).toBe('hook');
+    expect(kind.literalKeys).toEqual([]);
+  });
+
+  it('runs the given command/args through ports.processRunner.run(), omitting "cwd" entirely — never targetDir', async () => {
+    const calls: Array<{ command: string; args: string[]; options: { cwd?: string } | undefined }> = [];
+    const ports: HookPorts = {
+      prompter: {
+        async ask() {
+          return {};
+        },
+      },
+      fileWriter: {
+        async ensureEmptyDir() {},
+        async writeFile() {},
+        async readFile() {
+          return undefined;
+        },
+        async overwriteFile() {},
+      },
+      processRunner: {
+        async run(command, args, options) {
+          calls.push({ command, args, options });
+        },
+      },
+    };
+    const kind = runHookCommandKind();
+    const parsed = kind.schema.parse({
+      command: 'npx',
+      args: ['tsx', 'src/cli/index.ts', 'scaffold', 'synth', 'src/plugins/my-plugin'],
+    });
+
+    await kind.handler(parsed, ports, {});
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.command).toBe('npx');
+    expect(calls[0]!.args).toEqual(['tsx', 'src/cli/index.ts', 'scaffold', 'synth', 'src/plugins/my-plugin']);
+    // The whole point of runHookCommand vs runCommand (D-B): cwd is never
+    // passed at all — structurally impossible to configure, not merely
+    // defaulted to undefined by an options object — so this always runs
+    // with the real invoking process's cwd.
+    expect(calls[0]!.options).toBeUndefined();
+  });
+
+  it('defaults args to an empty array when omitted', () => {
+    const kind = runHookCommandKind();
+    const parsed = kind.schema.parse({ command: 'git' });
+    expect(parsed).toEqual({ command: 'git', args: [] });
+  });
+
+  it('rejects malformed params (empty command) via zod', () => {
+    const kind = runHookCommandKind();
+    expect(() => kind.schema.parse({ command: '   ', args: [] })).toThrow();
+  });
+
+  describe('expression resolution through compileScaffold() — literalKeys: [] means "args" entries may be computed from answers', () => {
+    it('resolves an args entry built via { var: "pluginId" } JSON Logic against answers, unlike patchFile\'s anchor/path (which reject this via literalKeys)', async () => {
+      const received: Array<{ command: string; args: string[] }> = [];
+      const ports = fakePorts();
+      ports.processRunner = {
+        async run(command, args) {
+          received.push({ command, args });
+        },
+      };
+
+      const def = definition({
+        id: 'run-hook-command-expr',
+        hooks: {
+          postInit: [step('runHookCommand', { command: 'npx', args: ['tsx', { var: 'pluginId' }] })],
+        },
+      });
+      const evaluator = new FakeEvaluator();
+      const plugin = compileScaffold(def, evaluator);
+
+      await plugin.hooks!.postInit![0]!(ports, { pluginId: 'my-cool-plugin' });
+
+      expect(received).toEqual([{ command: 'npx', args: ['tsx', 'my-cool-plugin'] }]);
     });
   });
 });

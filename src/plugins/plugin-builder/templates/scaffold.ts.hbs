@@ -1,0 +1,12 @@
+import { defineScaffold, file } from '../../authoring/builder.js';
+import { loadTemplate } from '../../authoring/templateLoader.js';
+
+const readmeContent = loadTemplate(import.meta.dirname, 'templates/readme.md.hbs');
+
+export default defineScaffold({
+  id: '{{pluginId}}',
+  description: '{{description}}',
+  help: { name: '{{displayName}}' },
+  questions: [],
+  steps: [file('README.md', readmeContent)],
+});

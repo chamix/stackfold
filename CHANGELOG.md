@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`runHookCommand` — a `tag:'hook'` counterpart to `runCommand`** (Task
+  042, D-B — .agents/specs/042-plugin-builder-ts-authoring.md): runs an
+  external command via `ports.processRunner.run()` with the real invoking
+  process's cwd, never `targetDir` — the structural gap `runCommand`
+  (always run with `cwd: targetDir`, `core/orchestrator.ts`) can't fill
+  for a scaffold whose own `targetDir` isn't the directory it needs to
+  invoke a sibling command against. Same params shape as `runCommand`
+  (`command`, `args`), no `cwd` field at all (deliberate: not
+  configurable, so "never targetDir" is structural, not an option an
+  author could pass wrong), `literalKeys: []` (unlike `patchFile`/
+  `deriveAnswer`: neither field controls where a mutation lands, so
+  `args` may legitimately be computed from answers).
+- **`plugin-builder` v2 — reauthored as a TS `scaffold.ts` + synth** (Task
+  042, SK-ADR-003): `src/plugins/plugin-builder/index.ts` (a TS factory
+  function taking an injected `gitUserName`) is gone, replaced by
+  `src/plugins/plugin-builder/scaffold.ts` (authored via
+  `defineScaffold()`/`loadTemplate()`/`step()`, `src/authoring/builder.ts`),
+  3 sibling `.hbs` templates, and a committed `scaffold.json` produced by a
+  real `stackfold scaffold synth` run (never hand-written). Unlike
+  `electron-stackfold`, `src/cli/index.ts` registers plugin-builder by
+  compiling its `scaffold.js` module directly rather than importing
+  `scaffold.json` — deliberate, not an oversight: `scaffold.ts`'s 4
+  questions declare real `validate` closures, and JSON can't carry
+  function values, so a JSON-compiled runtime path would silently drop
+  every one of them (found by independent review, confirmed by direct
+  reproduction, now covered by a regression test asserting the real
+  `cli/index.ts` import specifier). `scaffold.json` stays committed as the
+  synth-verified canonical artifact — it's just not what's loaded at
+  runtime for this one plugin. The generated plugin it scaffolds is now
+  TS-authored too — its own `scaffold.ts` + `templates/readme.md.hbs` +
+  `scaffold.test.ts` (importing `./scaffold.js`, never `./scaffold.json` —
+  proves the definition compiles without depending on `synth` having run),
+  a `postInit` hook chain of (1) `runHookCommand` → `stackfold scaffold
+  synth src/plugins/<pluginId>` against the repo root, (2)/(3) the same
+  two `patchFile` insertions v1 already had, registering the new plugin
+  into `src/cli/index.ts`. The order is the whole mechanism (no new
+  error-handling code): `runHooks()`'s existing abort-on-throw
+  (`core/orchestrator.ts`) means a failed synth — a malformed generated
+  `scaffold.ts`, a broken template — never leaves `src/cli/index.ts`
+  patched to import a `scaffold.json` that doesn't exist. The `author`
+  question (both plugin-builder's own and the generated plugin's) now
+  carries a plain, static `default: ''` — the same convention `web-app`/
+  `electron-ts` already use — rather than v1's dynamic `git config
+  user.name` lookup, which had no viable injection point once
+  plugin-builder stopped compiling via a TS factory function (Task 042
+  Open item 1). The generated plugin's own `scaffold.ts` now escapes
+  `displayName`/`description` for safe interpolation into a TS string
+  literal via a new `jsEscapeKeys` field on `writeFile` (mirroring the
+  existing JSON-context `jsonEscapeKeys`, backed by a new
+  `escapeForJsContext()` helper in `core/authoring.ts`) — a `displayName`/
+  `description` containing a single quote (ordinary, schema-accepted free
+  text) now produces valid, parseable TypeScript instead of a broken
+  generated file (found by independent review, fixed, confirmed by direct
+  reproduction against both the pre-fix and post-fix output).
 - **`mountFragment()` — fragments namespaced** (Task 041, SK-ADR-003 Cycle
   2): a new `src/authoring/fragment.ts`, built with zero changes to
   `src/core/*.ts`. A `Fragment` (the same shape as a `ScaffoldDefinition`

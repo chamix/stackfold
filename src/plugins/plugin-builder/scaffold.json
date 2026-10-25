@@ -1,0 +1,137 @@
+{
+  "id": "plugin-builder",
+  "description": "Scaffolds a brand-new stackfold plugin, authored as a TS scaffold.ts + synth (SK-ADR-003), and registers it into stackfold's own plugin registry.",
+  "help": {
+    "name": "Plugin Builder",
+    "details": "Generates a new stackfold plugin as a TS-authored scaffold.ts + sibling .hbs templates under src/plugins/<pluginId>/, synthesizes its canonical scaffold.json via a real `stackfold scaffold synth` invocation, and registers it into src/cli/index.ts via the patchFile hook action. Run from the root of a stackfold checkout."
+  },
+  "questions": [
+    {
+      "id": "pluginId",
+      "message": "Plugin id (kebab-case, e.g. \"my-cool-plugin\")",
+      "type": "input",
+      "default": "my-plugin"
+    },
+    {
+      "id": "displayName",
+      "message": "Display name (shown in `stackfold list`/`info`)",
+      "type": "input",
+      "default": "My Plugin"
+    },
+    {
+      "id": "description",
+      "message": "Short description (shown in listings)",
+      "type": "input",
+      "default": "A stackfold plugin."
+    },
+    {
+      "id": "author",
+      "message": "Author",
+      "type": "input",
+      "default": ""
+    }
+  ],
+  "steps": [
+    {
+      "action": "writeFile",
+      "params": {
+        "path": {
+          "cat": [
+            {
+              "var": "pluginId"
+            },
+            "/templates/readme.md.hbs"
+          ]
+        },
+        "content": "# {{displayName}}\n\n{{description}}\n"
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": {
+          "cat": [
+            {
+              "var": "pluginId"
+            },
+            "/scaffold.ts"
+          ]
+        },
+        "content": "import { defineScaffold, file } from '../../authoring/builder.js';\nimport { loadTemplate } from '../../authoring/templateLoader.js';\n\nconst readmeContent = loadTemplate(import.meta.dirname, 'templates/readme.md.hbs');\n\nexport default defineScaffold({\n  id: '{{pluginId}}',\n  description: '{{description}}',\n  help: { name: '{{displayName}}' },\n  questions: [],\n  steps: [file('README.md', readmeContent)],\n});\n",
+        "jsEscapeKeys": [
+          "displayName",
+          "description"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": {
+          "cat": [
+            {
+              "var": "pluginId"
+            },
+            "/scaffold.test.ts"
+          ]
+        },
+        "content": "import { describe, expect, it } from 'vitest';\nimport { compileScaffold, type ScaffoldDefinition } from '../../core/authoring.js';\nimport { JsonLogicExpressionEvaluator } from '../../infra/expressionEvaluator.js';\nimport definition from './scaffold.js';\n\ndescribe('{{pluginId}} — generated ScaffoldDefinition', () => {\n  it('parses/compiles via compileScaffold() without throwing', async () => {\n    const resolved =\n      typeof definition === 'function' ? await (definition as () => unknown | Promise<unknown>)() : definition;\n    expect(() => compileScaffold(resolved as ScaffoldDefinition, new JsonLogicExpressionEvaluator())).not.toThrow();\n  });\n});\n"
+      }
+    }
+  ],
+  "hooks": {
+    "postInit": [
+      {
+        "action": "runHookCommand",
+        "params": {
+          "command": "npx",
+          "args": [
+            "tsx",
+            "src/cli/index.ts",
+            "scaffold",
+            "synth",
+            {
+              "cat": [
+                "src/plugins/",
+                {
+                  "var": "pluginId"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "action": "patchFile",
+        "params": {
+          "path": "src/cli/index.ts",
+          "anchor": "// stackfold-plugin-imports:end",
+          "insert": {
+            "cat": [
+              "import { compileScaffold } from '../core/authoring.js';\n",
+              "import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';\n"
+            ]
+          },
+          "position": "before"
+        }
+      },
+      {
+        "action": "patchFile",
+        "params": {
+          "path": "src/cli/index.ts",
+          "anchor": "// stackfold-plugin-registry:end",
+          "insert": {
+            "cat": [
+              "  compileScaffold((await import('../plugins/",
+              {
+                "var": "pluginId"
+              },
+              "/scaffold.json', { with: { type: 'json' } })).default, expressionEvaluator),\n"
+            ]
+          },
+          "position": "before"
+        }
+      }
+    ]
+  }
+}

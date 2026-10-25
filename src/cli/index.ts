@@ -11,7 +11,7 @@ import { registerInfoCommand } from './commands/info.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
 import { registerScaffoldSynthCommand } from './commands/scaffoldSynth.js';
-import { defaultGitUserName, NodeFileWriter } from '../infra/fs.js';
+import { NodeFileWriter } from '../infra/fs.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
 import { InquirerPrompter } from '../infra/prompter.js';
@@ -20,7 +20,6 @@ import { compileScaffold, type ScaffoldDefinition } from '../core/authoring.js';
 import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';
 import { electronTsPlugin } from '../plugins/electron-ts/index.js';
 import { webAppSpaPlugin, webAppStandaloneHtmlPlugin } from '../plugins/web-app/index.js';
-import { createPluginBuilderDefinition } from '../plugins/plugin-builder/index.js';
 // stackfold-plugin-imports:end
 
 /**
@@ -28,10 +27,16 @@ import { createPluginBuilderDefinition } from '../plugins/plugin-builder/index.j
  * real `StackfoldPlugin` (ARCH-001/Task 034) — the one place in the CLI
  * allowed to import `infra/` (Inward Dependency Rule: `plugins/` stays
  * `core/`-only, so this compile step lives here, in the composition root).
- * Shared by `plugin-builder` itself below and by any future plugin
+ * Shared by `plugin-builder` itself below — compiled directly from its own
+ * `scaffold.js` (not `scaffold.json`), so its questions' `validate`
+ * closures stay live (Task 042 review follow-up, review_report.md Blocking
+ * #1 — JSON cannot carry function values, so a JSON-compiled runtime path
+ * silently dropped every `validate` closure) — and by any future plugin
  * `plugin-builder` generates (its own `patchFile` hooks insert a
- * `compileScaffold(...)` call referencing this same instance — see
- * `plugins/plugin-builder/index.ts`).
+ * `compileScaffold(...)` call referencing this same instance, sourced from
+ * that generated plugin's own `scaffold.json` — an ordinary generated
+ * plugin has no TS factory/validate concerns of its own, so JSON is fine
+ * there; see `plugins/plugin-builder/scaffold.ts`).
  */
 const expressionEvaluator = new JsonLogicExpressionEvaluator();
 
@@ -39,11 +44,11 @@ const registry = new StaticPluginRegistry([
   electronTsPlugin,
   webAppSpaPlugin,
   webAppStandaloneHtmlPlugin,
-  compileScaffold(createPluginBuilderDefinition({ gitUserName: defaultGitUserName }), expressionEvaluator),
   compileScaffold(
     (await import('../plugins/electron-stackfold/scaffold.json', { with: { type: 'json' } })).default as ScaffoldDefinition,
     expressionEvaluator
   ),
+  compileScaffold((await import('../plugins/plugin-builder/scaffold.js')).default, expressionEvaluator),
   // stackfold-plugin-registry:end
 ]);
 
