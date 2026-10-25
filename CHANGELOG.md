@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mountFragment()` — fragments namespaced** (Task 041, SK-ADR-003 Cycle
+  2): a new `src/authoring/fragment.ts`, built with zero changes to
+  `src/core/*.ts`. A `Fragment` (the same shape as a `ScaffoldDefinition`
+  minus `id`/`description`/`help`) can be written once, with un-prefixed,
+  fragment-local question ids, and mounted into a root scaffold (or
+  another fragment) via `mountFragment(factory, props, { namespace,
+  inputs? })`. Every internal reference — `writeFile`'s Handlebars
+  `content` (regex-based, word-bounded rewrite) and every other
+  non-`literalKeys` `params` field plus `when` (structural JSONLogic
+  `{ var: ... }` walk, bounded by `resolveAction()`'s own `literalKeys`) —
+  is rewritten to `${namespace}__${localId}` by default, or to an
+  explicit, mount-site-supplied external id via `inputs` (never
+  auto-detected by name). The real separator is `__`, not `.` — confirmed
+  against real Handlebars/json-logic-js render output in Task 040's spike
+  (`.agents/handoff-scaffold-synth-namespace-separator.md`): both engines
+  give `.` a property-navigation meaning a flat `Answers` map doesn't
+  intend. Namespace collisions are caught immediately at mount time by a
+  module-level registry inside `mountFragment()` itself (`Set<string>`,
+  with `resetFragmentNamespaceRegistry()` exported for test isolation) —
+  not deferred to a later composition step. `composeFragments(...)` /
+  `mergeHooks(a, b)` are a purely structural merge on top (concat
+  `questions`/`steps`, concat `hooks` per `HookName` in declaration order
+  — the same semantics `core/authoring.ts`'s `compileHooks()` already
+  uses), with no collision logic of their own, since that is fully
+  covered by `mountFragment()`'s registry. `mountFragment()` never writes
+  to disk and never calls `compileScaffold()`/`synth()` itself — the
+  flattened `Fragment`/`ScaffoldDefinition` still goes through Cycle 1's
+  unchanged `synth()` pipeline. **Amendment to `src/authoring/synth.ts`**
+  (independent of fragments, a residual gap found while designing the
+  namespace registry): `scaffoldDefinitionSchema` gains a `.superRefine()`
+  that fails with a specific message (`` questions[].id "X" appears more
+  than once ``) whenever a `ScaffoldDefinition` declares a duplicate
+  `questions[].id`, whatever produced it — a fragment bug or a
+  hand-written duplicate, no fragments involved.
+- **TS-authored scaffolds + `stackfold scaffold synth <dir>`** (Task 039,
+  SK-ADR-003 Cycle 1): a new `src/authoring/` tooling layer, outside
+  `core/` and built with zero changes to `core/authoring.ts`/`core/
+  types.ts`/`core/ports.ts`. `src/authoring/builder.ts` adds small, typed,
+  CDK-flavored builder functions (`defineScaffold()`, `file()`, `mkdir()`,
+  `runCommand()`, `npmInstall()`, `gitInit()`, `step()`) that return plain
+  data matching the existing `ScaffoldDefinition`/`ActionStep` shapes —
+  `file()`, not `writeFile()`, to avoid reading as a re-implementation of
+  the already-registered `writeFile` action. `src/authoring/
+  templateLoader.ts` adds a shared `loadTemplate(baseDir, relativePath)`
+  that reads a sibling `.hbs` file's raw content from disk, for inlining
+  into a `file()` step's `content`. `src/authoring/synth.ts` adds the
+  `synth()` pipeline: a new top-level zod schema structurally validates
+  the given `ScaffoldDefinition` (no such schema existed before — only
+  per-`ActionKind` schemas inside `compileScaffold()`), then a real smoke
+  test calls `compileScaffold()` *and* the compiled plugin's
+  `buildBlueprint()` (still pure, no disk I/O) with answers synthesized
+  from each question's own default, so an unknown action name or bad step
+  shape fails fast instead of only being caught much later. Only on
+  success is the definition serialized to formatted JSON and written,
+  write-to-temp-then-rename, to the canonical `src/plugins/<id>/
+  scaffold.json` path — never a partial/invalid file on any failure.
+  `src/cli/commands/scaffoldSynth.ts` wires this into a real `stackfold
+  scaffold synth <dir>` subcommand, the one place allowed to load and run
+  the author's own `scaffold.ts` module at command time, via `tsx`'s
+  existing `tsImport()` API (already a devDependency — no new one added).
+  Fragments/namespacing are explicitly out of scope for this cycle (Task
+  041, SK-ADR-003 Cycle 2).
 - **`dev` script for electron-ts / electron-stackfold** (Task 037): a new
   `scripts.dev` entry (`npm run build && electron .`) added to both plugin
   templates' generated `package.json` and documented in their generated
