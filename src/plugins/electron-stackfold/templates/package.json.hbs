@@ -1,0 +1,38 @@
+{
+  "name": "{{packageName}}",
+  "productName": "{{appName}}",
+  "version": "0.1.0",
+  "description": "{{description}}",
+  "private": true,
+  {{#if author}}"author": "{{author}}",
+  "license": "MIT",
+  {{/if}}"main": "dist/main/index.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "npm run build && electron .",
+    "package": "electron-builder",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  {{#if includeSettings}}"dependencies": {
+    "zod": "^4.6.5"
+  },
+  {{else}}{{#if includeSkins}}"dependencies": {
+    "zod": "^4.6.5"
+  },
+  {{/if}}{{/if}}"devDependencies": {
+    "electron": "^44.4.5",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.2",
+    "@types/node": "^24.19.0",
+    "esbuild": "^0.28.2",
+    "electron-builder": "^26.15.3",
+    "@playwright/test": "^1.64.0"
+  },
+  "overrides": {
+    "@electron/get": "^5.1.0",
+    "glob": "^13.0.6",
+    "rimraf": "^6.1.3"
+  }
+}

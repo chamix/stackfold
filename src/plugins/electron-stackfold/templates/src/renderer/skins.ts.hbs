@@ -1,0 +1,28 @@
+import type { BridgeApi } from '../preload/api.js';
+
+declare global {
+  interface Window {
+    {{bridgeGlobal}}: BridgeApi;
+  }
+}
+
+const bridge = window.{{bridgeGlobal}};
+
+function styleTag(): HTMLStyleElement {
+  let tag = document.getElementById('skin') as HTMLStyleElement | null;
+  if (!tag) {
+    tag = document.createElement('style');
+    tag.id = 'skin';
+    document.head.appendChild(tag);
+  }
+  return tag;
+}
+
+async function applyActiveSkin(): Promise<void> {
+  const [skins, activeName] = await Promise.all([bridge.skins.list(), bridge.skins.getActive()]);
+  const active = skins.find((skin) => skin.name === activeName);
+  styleTag().textContent = active?.css ?? '';
+}
+
+void applyActiveSkin();
+bridge.skins.onChange(() => void applyActiveSkin());

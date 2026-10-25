@@ -1,0 +1,47 @@
+{{#if includeSettings}}import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { IPC_CHANNELS, type BridgeApi } from './api.js';
+{{else}}{{#if includeSkins}}import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { IPC_CHANNELS, type BridgeApi } from './api.js';
+{{else}}import { contextBridge } from 'electron';
+import type { BridgeApi } from './api.js';
+{{/if}}{{/if}}{{#if includeSettings}}import type { ViewSettings } from '../main/settings.js';
+{{/if}}{{#if includeSkins}}import type { Skin } from '../main/skins.js';
+{{/if}}
+
+{{#if includeSettings}}const api: BridgeApi = {
+  settings: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet) as Promise<ViewSettings>,
+    set: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsSet, patch) as Promise<ViewSettings>,
+    onChange: (callback) => {
+      const listener = (_event: IpcRendererEvent, settings: ViewSettings) => callback(settings);
+      ipcRenderer.on(IPC_CHANNELS.settingsChanged, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.settingsChanged, listener);
+    },
+  },
+{{#if includeSkins}}  skins: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.skinsList) as Promise<Skin[]>,
+    getActive: () => ipcRenderer.invoke(IPC_CHANNELS.skinsGetActive) as Promise<string | undefined>,
+    setActive: (name) => ipcRenderer.invoke(IPC_CHANNELS.skinsSetActive, name) as Promise<void>,
+    onChange: (callback) => {
+      const listener = (_event: IpcRendererEvent, skins: Skin[]) => callback(skins);
+      ipcRenderer.on(IPC_CHANNELS.skinsChanged, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.skinsChanged, listener);
+    },
+  },
+{{/if}}
+};
+{{else}}{{#if includeSkins}}const api: BridgeApi = {
+  skins: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.skinsList) as Promise<Skin[]>,
+    getActive: () => ipcRenderer.invoke(IPC_CHANNELS.skinsGetActive) as Promise<string | undefined>,
+    setActive: (name) => ipcRenderer.invoke(IPC_CHANNELS.skinsSetActive, name) as Promise<void>,
+    onChange: (callback) => {
+      const listener = (_event: IpcRendererEvent, skins: Skin[]) => callback(skins);
+      ipcRenderer.on(IPC_CHANNELS.skinsChanged, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.skinsChanged, listener);
+    },
+  },
+};
+{{else}}const api: BridgeApi = {};
+{{/if}}{{/if}}
+contextBridge.exposeInMainWorld('{{bridgeGlobal}}', api);

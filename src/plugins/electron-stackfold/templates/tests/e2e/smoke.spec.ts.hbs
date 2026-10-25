@@ -1,0 +1,39 @@
+import { test, expect } from './support/fixtures.js';
+
+const BRIDGE_GLOBAL = "{{bridgeGlobal}}";
+const EXPECTED_BRIDGE_KEYS: string[] = [{{#if includeSettings}}"settings"{{#if includeSkins}},"skins"{{/if}}{{else}}{{#if includeSkins}}"skins"{{/if}}{{/if}}];
+
+test.describe('smoke', () => {
+  test('launches and renders the placeholder', async ({ electronApp, window }) => {
+    expect(electronApp.windows()).toHaveLength(1);
+    const heading = window.locator('h1');
+    await expect(heading).toBeVisible();
+    expect(await heading.textContent()).toBe(await window.title());
+  });
+
+  test('renderer is isolated from Node', async ({ window }) => {
+    const result = await window.evaluate(() => ({
+      hasRequire: typeof (globalThis as Record<string, unknown>)['require'],
+      hasProcess: typeof (globalThis as Record<string, unknown>)['process'],
+      hasModule: typeof (globalThis as Record<string, unknown>)['module'],
+    }));
+    expect(result.hasRequire).toBe('undefined');
+    expect(result.hasProcess).toBe('undefined');
+    expect(result.hasModule).toBe('undefined');
+  });
+
+  test('bridge exposes only the declared surface', async ({ window }) => {
+    const keys = await window.evaluate(
+      (bridgeGlobal) => Object.keys((globalThis as Record<string, unknown>)[bridgeGlobal] ?? {}).sort(),
+      BRIDGE_GLOBAL
+    );
+    expect(keys).toEqual(EXPECTED_BRIDGE_KEYS);
+  });
+
+  test('application menu is installed', async ({ electronApp }) => {
+    const labels = await electronApp.evaluate(({ Menu }) =>
+      (Menu.getApplicationMenu()?.items ?? []).map((item) => item.label)
+    );
+    expect(labels).toContain('File');
+  });
+});

@@ -1,0 +1,57 @@
+import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+
+/**
+ * Registers an IPC handler that only runs for senders belonging to this
+ * app's own window tree. Every future channel must be registered through
+ * this, never through `ipcMain.handle` directly — see electron/security.md.
+ */
+export function registerHandler(
+  channel: string,
+  isTrustedSender: (event: IpcMainInvokeEvent) => boolean,
+  handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedSender(event)) {
+      throw new Error(`Rejected IPC call on "${channel}" from an untrusted sender.`);
+    }
+    return handler(event, ...args);
+  });
+}
+{{#if includeSettings}}
+
+/**
+ * Tracks which webContents belong to this app's own window tree, so
+ * every registerHandler() call above can validate its sender.
+ */
+const trustedWebContentsIds = new Set<number>();
+
+export function trustWebContents(id: number): void {
+  trustedWebContentsIds.add(id);
+}
+
+export function untrustWebContents(id: number): void {
+  trustedWebContentsIds.delete(id);
+}
+
+export function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  return trustedWebContentsIds.has(event.sender.id);
+}
+{{else}}{{#if includeSkins}}
+/**
+ * Tracks which webContents belong to this app's own window tree, so
+ * every registerHandler() call above can validate its sender.
+ */
+const trustedWebContentsIds = new Set<number>();
+
+export function trustWebContents(id: number): void {
+  trustedWebContentsIds.add(id);
+}
+
+export function untrustWebContents(id: number): void {
+  trustedWebContentsIds.delete(id);
+}
+
+export function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  return trustedWebContentsIds.has(event.sender.id);
+}
+{{/if}}{{/if}}

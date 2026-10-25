@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`electron-stackfold` reauthored as a TS `scaffold.ts` + synth** (Task
+  043, SK-ADR-003): same mechanical port pattern as `plugin-builder`
+  (Task 042), but simpler — none of its 6 questions carry `validate`
+  closures or dynamic defaults, so `src/cli/index.ts` keeps loading its
+  compiled `scaffold.json` unchanged. 40 sibling `.hbs` templates replace
+  the old inline Handlebars `content` strings; the regenerated
+  `scaffold.json` is byte-identical to the hand-written original
+  (confirmed via `git diff`), and the plugin's real generated output is
+  byte-identical to `main` for both the minimal- and maximal-flags cases.
+- **`web-app-stackfold` — merges `web-app-spa` + `web-app-standalone-html`
+  into one plugin** (Task 043, SK-ADR-003): the old two-plugin,
+  TS-`switch`-dispatched flavor/framework model is replaced by a single
+  `appType` select (`standalone-html`/`spa-react`/`spa-vue`/`spa-vanilla`)
+  gating 7 fragments ported via `mountFragment()`/`composeFragments()`
+  (Task 041) with `ActionStep.when` — the first use of that combination
+  in this codebase. `src/cli/index.ts` registers it by compiling
+  `scaffold.js` directly (not `scaffold.json`), same reason as
+  `plugin-builder`: its `appName`/`description`/`author` questions carry
+  real `validate` closures. Generated output is byte-identical to the two
+  old plugins' across all 4 `appType` values, independently reconfirmed
+  by review via a `git worktree` of `main`.
+- **`htmlEscapeKeys` / `scriptCloseEscapeKeys` — new `writeFile` escape
+  mechanisms** (Task 043, `core/authoring.ts`): mirror the existing
+  `jsonEscapeKeys`/`jsEscapeKeys` pattern (Task 034/042). Added because
+  porting `web-app`'s `standalone-html` and `vite-vue` fragments to the
+  DSL (whose `compileTemplate()` runs Handlebars with `noEscape: true`)
+  would otherwise have silently dropped two real, previously-fixed
+  defenses: `escapeHtml()`'s HTML-entity escaping (closing a Task-014 XSS
+  finding) and `escapeScriptClose()`'s SFC-parser guard (preventing a
+  crafted `appName` from breaking out of a Vue `<script setup>` block via
+  a `</script` substring). Both proven with real adversarial payloads —
+  the latter via a real `@vue/compiler-sfc` parse plus an `eval()`
+  round-trip, not just a string check.
 - **`runHookCommand` — a `tag:'hook'` counterpart to `runCommand`** (Task
   042, D-B — .agents/specs/042-plugin-builder-ts-authoring.md): runs an
   external command via `ports.processRunner.run()` with the real invoking

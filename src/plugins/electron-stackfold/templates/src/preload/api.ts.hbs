@@ -1,0 +1,56 @@
+{{#if includeSettings}}import type { ViewSettings } from '../main/settings.js';
+{{/if}}{{#if includeSkins}}import type { Skin } from '../main/skins.js';
+{{/if}}{{#if includeSettings}}
+{{else}}{{#if includeSkins}}
+{{/if}}{{/if}}/**
+ * The complete, enumerable surface between renderer and main process.
+ * There are zero channels today; the bridge still exists and stays narrow.
+ * To add an operation: one entry here named
+ * `{{packageName}}:<operation>`, one method on BridgeApi, and a main-process
+ * handler registered through `registerHandler()` (`src/main/ipc.ts`),
+ * which validates the event sender before acting. Never expose ipcRenderer
+ * itself or a wildcard channel.
+ */
+{{#if includeSettings}}export const IPC_CHANNELS = {
+  settingsGet: '{{packageName}}:settings:get',
+  settingsSet: '{{packageName}}:settings:set',
+  settingsChanged: '{{packageName}}:settings:changed',
+{{#if includeSkins}}  skinsList: '{{packageName}}:skins:list',
+  skinsGetActive: '{{packageName}}:skins:getActive',
+  skinsSetActive: '{{packageName}}:skins:setActive',
+  skinsChanged: '{{packageName}}:skins:onChange',
+{{/if}}
+} as const satisfies Record<string, string>;
+{{else}}{{#if includeSkins}}export const IPC_CHANNELS = {
+  skinsList: '{{packageName}}:skins:list',
+  skinsGetActive: '{{packageName}}:skins:getActive',
+  skinsSetActive: '{{packageName}}:skins:setActive',
+  skinsChanged: '{{packageName}}:skins:onChange',
+} as const satisfies Record<string, string>;
+{{else}}export const IPC_CHANNELS = {} as const satisfies Record<string, string>;
+{{/if}}{{/if}}
+{{#if includeSettings}}export interface BridgeApi {
+  settings: {
+    get(): Promise<ViewSettings>;
+    set(patch: Partial<ViewSettings>): Promise<ViewSettings>;
+    onChange(callback: (settings: ViewSettings) => void): () => void;
+  };
+{{#if includeSkins}}  skins: {
+    list(): Promise<Skin[]>;
+    getActive(): Promise<string | undefined>;
+    setActive(name: string): Promise<void>;
+    onChange(callback: (skins: Skin[]) => void): () => void;
+  };
+{{/if}}
+}
+{{else}}{{#if includeSkins}}export interface BridgeApi {
+  skins: {
+    list(): Promise<Skin[]>;
+    getActive(): Promise<string | undefined>;
+    setActive(name: string): Promise<void>;
+    onChange(callback: (skins: Skin[]) => void): () => void;
+  };
+}
+{{else}}// Zero methods today; extended per channel, never wildcarded.
+export interface BridgeApi {}
+{{/if}}{{/if}}

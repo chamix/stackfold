@@ -1,0 +1,36 @@
+export interface PollUntilStableOptions {
+  /** Maximum total time to wait, in ms. Default 5000. */
+  timeoutMs?: number;
+  /** Delay between polls, in ms. Default 50. */
+  intervalMs?: number;
+  /** Consecutive identical reads required before considering the value stable. Default 3. */
+  stableCount?: number;
+}
+
+export async function pollUntilStable<T>(
+  read: () => T | Promise<T>,
+  options: PollUntilStableOptions = {}
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 5000;
+  const intervalMs = options.intervalMs ?? 50;
+  const stableCount = options.stableCount ?? 3;
+  if (stableCount < 1) {
+    throw new Error('pollUntilStable: stableCount must be at least 1');
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | undefined;
+  let consecutive = 0;
+
+  for (;;) {
+    const value = await read();
+    consecutive = consecutive > 0 && Object.is(value, lastValue) ? consecutive + 1 : 1;
+    lastValue = value;
+
+    if (consecutive >= stableCount) return value;
+    if (Date.now() >= deadline) {
+      throw new Error(`pollUntilStable: timed out after ${timeoutMs}ms waiting for a stable value`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}

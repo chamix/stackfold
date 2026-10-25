@@ -1,0 +1,16 @@
+import type { BridgeApi } from '../preload/api.js';
+
+declare global {
+  interface Window {
+    {{bridgeGlobal}}: BridgeApi;
+  }
+}
+
+const bridge = window.{{bridgeGlobal}};
+
+function applyTheme(darkMode: boolean): void {
+  document.documentElement.classList.toggle('theme-dark', darkMode);
+}
+
+void bridge.settings.get().then((settings) => applyTheme(settings.darkMode));
+bridge.settings.onChange((settings) => applyTheme(settings.darkMode));

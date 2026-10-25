@@ -1,0 +1,63 @@
+# {{appName}}
+
+{{description}}
+
+## Security posture
+
+Every window is created with `secureWebPreferences()` (`src/main/windowConfig.ts`):
+context isolation and the sandbox are on and Node integration is off, set
+explicitly rather than inherited from Electron's defaults. All in-app
+navigation is blocked and `window.open` is always denied (`src/main/index.ts`);
+external http(s) links, classified by the pure `isExternalHttpUrl()` predicate
+in `src/main/linkPolicy.ts`, open in the system browser instead. The renderer
+reaches the main process only through the named `window.{{bridgeGlobal}}` bridge
+declared in `src/preload/api.ts`, which exposes no operations yet. Each new
+operation gets its own named channel and method there; the bridge never
+forwards raw Electron APIs.
+
+## Scripts
+
+- `npm run build`: compile TypeScript to `dist/`
+- `npm run dev`: rebuild and launch the app in a real Electron window
+- `npm run typecheck`: type-check without emitting
+- `npm test`: run the unit tests
+- `npm run test:e2e`: launch the real built app with Playwright and run the
+  e2e smoke suite (run `npm run build` first)
+- `npm run package`: build a Windows installer with electron-builder
+
+## CI & releases
+
+`.github/workflows/ci.yml` runs on every pull request: typecheck, build,
+unit tests, then the e2e suite, on `windows-latest`. It runs `npm ci`,
+which requires a committed `package-lock.json` — this project has none
+until your first `npm install`, so commit it once you have run that
+locally; otherwise the first CI run fails loudly, by design.
+
+`.github/workflows/release.yml` runs the same checks on a `v*.*.*` tag,
+builds a Windows installer with electron-builder, and uploads it as a
+workflow artifact. It does **not** publish anywhere
+(`electron-builder.yml`'s `publish: null`). To switch it to actually
+publishing a release, make these three edits:
+
+1. `electron-builder.yml`: change `publish: null` to a real target (e.g.
+   `github`).
+2. `release.yml`: change `--publish never` to `--publish always`.
+3. `release.yml`: change `permissions: contents: read` to
+   `contents: write`.
+
+`npm install` also needs real network access to **github.com releases**,
+not just the npm registry, to download the Electron and Chromium
+binaries (the `electron` devDependency's own postinstall). If that path
+is blocked while the registry itself is reachable, `npm install` can
+still "succeed" with the binary missing, and the first `npm run test:e2e`
+run will then attempt the download itself instead of failing cleanly at
+install time. Behind a corporate HTTP(S) proxy, set
+`ELECTRON_GET_USE_PROXY=true` (with `HTTPS_PROXY`/`HTTP_PROXY` already
+set) before `npm install` / `npm run package`, so the binary download
+picks up your proxy instead of failing outright.
+
+Relatedly, `esbuild`, `electron-builder` and `electron-winstaller` each
+run their own `postinstall` install script to fetch native binaries
+(esbuild's own binary; electron-builder/electron-winstaller's packaging
+helpers). That is expected behavior, not a sign of a compromised
+install, and nothing in this project needs `--ignore-scripts`.

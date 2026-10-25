@@ -1,0 +1,102 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { app, BrowserWindow } from 'electron';
+import { staticWindowOptions } from './windowConfig.js';
+import { buildStaticWindowCsp, escapeHtml } from './staticWindowShell.js';
+
+interface PackageMetadata {
+  productName?: string;
+  name?: string;
+  version?: string;
+  description?: string;
+  author?: string;
+}
+
+interface ThirdPartyNotice {
+  name: string;
+  version: string;
+  license: string;
+}
+
+const STYLE_CSS = [
+  'body { font-family: system-ui, sans-serif; margin: 2rem; }',
+  'h1 { font-size: 1.25rem; }',
+  'dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }',
+].join('\n');
+
+function readOwnPackageJson(): PackageMetadata {
+  const raw = readFileSync(join(app.getAppPath(), 'package.json'), 'utf8');
+  return JSON.parse(raw) as PackageMetadata;
+}
+
+function readThirdPartyNotices(): ThirdPartyNotice[] {
+  try {
+    const raw = readFileSync(join(app.getAppPath(), 'third-party-notices.json'), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ThirdPartyNotice[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderNoticesHtml(notices: ThirdPartyNotice[]): string {
+  if (notices.length === 0) {
+    return '<p>No third-party dependencies are listed yet.</p>';
+  }
+  const items = notices
+    .map((n) => `<li>${escapeHtml(n.name)} ${escapeHtml(n.version)} — ${escapeHtml(n.license)}</li>`)
+    .join('\n');
+  return `<ul>${items}</ul>`;
+}
+
+function buildAboutHtml(): string {
+  const pkg = readOwnPackageJson();
+  const notices = readThirdPartyNotices();
+  const appName = escapeHtml(pkg.productName ?? pkg.name ?? 'This app');
+  const version = escapeHtml(pkg.version ?? '0.0.0');
+  const description = escapeHtml(pkg.description ?? '');
+  const authorRow = pkg.author ? `<dt>Author</dt><dd>${escapeHtml(pkg.author)}</dd>` : '';
+  return [
+    '<!doctype html>',
+    '<html>',
+    '<head>',
+    '<meta charset="utf-8" />',
+    buildStaticWindowCsp(STYLE_CSS),
+    `<title>About ${appName}</title>`,
+    `<style>${STYLE_CSS}</style>`,
+    '</head>',
+    '<body>',
+    `<h1>${appName}</h1>`,
+    `<p>${description}</p>`,
+    '<dl>',
+    `<dt>Version</dt><dd>${version}</dd>`,
+    authorRow,
+    '</dl>',
+    '<h2>Third-party software</h2>',
+    renderNoticesHtml(notices),
+    '</body>',
+    '</html>',
+  ].join('\n');
+}
+
+let aboutWindow: BrowserWindow | undefined;
+
+export function openAboutWindow(): void {
+  if (aboutWindow) {
+    aboutWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow(staticWindowOptions());
+  window.setMenu(null);
+  aboutWindow = window;
+  window.on('closed', () => {
+    aboutWindow = undefined;
+  });
+  window.loadURL(`data:text/html,${encodeURIComponent(buildAboutHtml())}`).catch((error: unknown) => {
+    console.error('Failed to load About window', error);
+  });
+}
+
+export function closeAboutWindow(): void {
+  aboutWindow?.close();
+}

@@ -1,0 +1,146 @@
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { app, BrowserWindow, Menu, shell } from 'electron';
+import { isExternalHttpUrl } from './linkPolicy.js';
+import { secureWebPreferences } from './windowConfig.js';
+import { buildMenuTemplate } from './menu.js';
+{{#if includeSettings}}import { trustWebContents, untrustWebContents } from './ipc.js';
+{{else}}{{#if includeSkins}}import { trustWebContents, untrustWebContents } from './ipc.js';
+{{/if}}{{/if}}{{#if includeAboutHelp}}import { closeAboutWindow } from './aboutWindow.js';
+import { closeHelpWindow } from './helpWindow.js';
+{{/if}}{{#if includeSettings}}import {
+  SETTINGS_CHANNELS,
+  loadSettingsAtStartup,
+  onSettingsChange,
+  registerSettingsIpcHandlers,
+  rereadSettingsOnFocus,
+} from './settingsStore.js';
+{{/if}}{{#if includeSkins}}import {
+  SKINS_CHANNELS,
+  loadSkinsAtStartup,
+  onSkinsChange,
+  registerSkinsIpcHandlers,
+  rereadSkinsOnFocus,
+} from './skinsStore.js';
+{{/if}}
+
+{{#if includeSettings}}registerSettingsIpcHandlers();
+
+{{/if}}{{#if includeSkins}}registerSkinsIpcHandlers();
+
+{{/if}}// Composition root: app lifecycle + window creation only. Paths assume the
+// compiled layout dist/main, dist/preload and dist/renderer.
+const PRELOAD_PATH = join(__dirname, '..', 'preload', 'index.js');
+const RENDERER_URL = pathToFileURL(join(__dirname, '..', 'renderer', 'index.html'));
+
+/**
+ * Derived from how the renderer is loaded, not hardcoded: a file:// URL has
+ * the opaque origin "null", so every http(s) URL counts as external. If the
+ * renderer is ever served over http(s) instead, derive this from that URL.
+ */
+const APP_ORIGIN = RENDERER_URL.origin;
+
+function openExternally(url: string): void {
+  shell.openExternal(url).catch((error: unknown) => {
+    console.error('Failed to open external URL', url, error);
+  });
+}
+
+app.on('web-contents-created', (_event, contents) => {
+  // The shell has no in-app navigation: block every attempt, and hand
+  // external http(s) links to the OS browser.
+  contents.on('will-navigate', (event) => {
+    event.preventDefault();
+    if (isExternalHttpUrl(event.url, APP_ORIGIN)) {
+      openExternally(event.url);
+    }
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url, APP_ORIGIN)) {
+      openExternally(url);
+    }
+    return { action: 'deny' };
+  });
+});
+
+function createWindow(): void {
+  const window = new BrowserWindow({
+    width: 1024,
+    height: 768,
+    show: false,
+    webPreferences: secureWebPreferences(PRELOAD_PATH),
+  });
+  window.once('ready-to-show', () => window.show());
+  window.loadURL(RENDERER_URL.href).catch((error: unknown) => {
+    console.error('Failed to load renderer', error);
+  });
+{{#if includeSettings}}
+
+  const windowId = window.webContents.id;
+  trustWebContents(windowId);
+{{else if includeSkins}}
+
+  const windowId = window.webContents.id;
+  trustWebContents(windowId);
+{{/if}}{{#if includeSettings}}
+  window.on('focus', () => {
+    rereadSettingsOnFocus().catch((error: unknown) => {
+      console.error('Failed to reread settings', error);
+    });
+  });
+  const unsubscribeSettingsChange = onSettingsChange((settings) => {
+    window.webContents.send(SETTINGS_CHANNELS.changed, settings);
+  });
+{{/if}}{{#if includeSkins}}
+  window.on('focus', () => {
+    rereadSkinsOnFocus().catch((error: unknown) => {
+      console.error('Failed to reread skins', error);
+    });
+  });
+  const unsubscribeSkinsChange = onSkinsChange((skins) => {
+    window.webContents.send(SKINS_CHANNELS.changed, skins);
+  });
+{{/if}}{{#if includeSettings}}
+  window.on('closed', () => {
+    untrustWebContents(windowId);
+    unsubscribeSettingsChange();
+{{#if includeSkins}}    unsubscribeSkinsChange();
+{{/if}}{{#if includeAboutHelp}}    closeAboutWindow();
+    closeHelpWindow();
+{{/if}}  });
+{{else if includeSkins}}
+
+  window.on('closed', () => {
+    untrustWebContents(windowId);
+    unsubscribeSkinsChange();
+{{#if includeAboutHelp}}    closeAboutWindow();
+    closeHelpWindow();
+{{/if}}  });
+{{else if includeAboutHelp}}
+
+  window.on('closed', () => {
+    closeAboutWindow();
+    closeHelpWindow();
+  });
+{{/if}}
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app
+  .whenReady()
+  .then(async () => {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+{{#if includeSettings}}    await loadSettingsAtStartup();
+{{/if}}{{#if includeSkins}}    await loadSkinsAtStartup();
+{{/if}}    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  })
+  .catch((error: unknown) => {
+    console.error('Failed to start', error);
+    app.quit();
+  });

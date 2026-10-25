@@ -1,0 +1,68 @@
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+
+// The generated package.json has no "type": "module", so this file runs as
+// CommonJS under Playwright's TS transform and __dirname is available.
+const REPO_ROOT = join(__dirname, '../../..');
+
+function requireBuiltMain(): void {
+  if (!existsSync(join(REPO_ROOT, 'dist/main/index.js'))) {
+    throw new Error('dist/main/index.js is missing — run `npm run build` first.');
+  }
+}
+
+/**
+ * electron.launch()'s env option requires string values only (no
+ * `undefined`), unlike `process.env` itself. ELECTRON_RUN_AS_NODE is
+ * stripped so the launched app runs as a real Electron app, not plain Node.
+ */
+function launchEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value;
+  }
+  return env;
+}
+
+export const test = base.extend<{
+  userDataDir: string;
+  electronApp: ElectronApplication;
+  window: Page;
+}>({
+  userDataDir: async ({}, use) => {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-'));
+    try {
+      await use(dir);
+    } finally {
+      // Windows can briefly hold Chromium files open after the app closes.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+
+  electronApp: async ({ userDataDir }, use) => {
+    requireBuiltMain();
+    // --user-data-dir= is load-bearing, not cosmetic: electron.launch()
+    // builds argv from `args` only and never reads a `userDataDir` option,
+    // so every run would otherwise share the real, shared profile.
+    const app = await electron.launch({
+      args: [`--user-data-dir=${userDataDir}`, '.'],
+      cwd: REPO_ROOT,
+      env: launchEnv(),
+    });
+    try {
+      await use(app);
+    } finally {
+      await app.close();
+    }
+  },
+
+  window: async ({ electronApp }, use) => {
+    const window = await electronApp.firstWindow();
+    await window.waitForLoadState('domcontentloaded');
+    await use(window);
+  },
+});
+
+export { expect } from '@playwright/test';

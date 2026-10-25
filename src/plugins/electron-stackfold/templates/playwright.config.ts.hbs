@@ -1,0 +1,11 @@
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  testMatch: '**/*.spec.ts',
+  // Capped at 2: running more concurrent Electron processes caused
+  // intermittent hard worker-process crashes on Windows (fastfail, exit code
+  // 3221226505) under the CPU-count default. Measured mitigation; root cause
+  // not isolated. Revisit if it ever gets its own investigation.
+  workers: 2,
+});

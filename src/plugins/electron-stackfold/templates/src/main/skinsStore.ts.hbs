@@ -1,0 +1,95 @@
+import { join } from 'node:path';
+import { copyFile, readFile } from 'node:fs/promises';
+import { app } from 'electron';
+import { atomicWriteFile } from './atomicWriteFile.js';
+import { registerHandler, isTrustedSender } from './ipc.js';
+import { SkinsFileSchema, DEFAULT_SKINS_FILE, type Skin, type SkinsFile } from './skins.js';
+
+export const SKINS_CHANNELS = {
+  list: '{{packageName}}:skins:list',
+  getActive: '{{packageName}}:skins:getActive',
+  setActive: '{{packageName}}:skins:setActive',
+  changed: '{{packageName}}:skins:onChange',
+} as const;
+
+export const SKINS_PATH = (): string => join(app.getPath('userData'), 'skins.json');
+
+let current: SkinsFile = DEFAULT_SKINS_FILE;
+// Intentionally in-memory-only (not part of SkinsFileSchema/skins.json):
+// the active skin selection resets to none on every relaunch.
+let activeSkinName: string | undefined;
+const listeners = new Set<(skins: Skin[]) => void>();
+
+async function readAndValidate(): Promise<SkinsFile | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(SKINS_PATH(), 'utf8');
+  } catch {
+    return undefined; // missing file -> caller keeps in-memory defaults, writes nothing
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    // corrupt (invalid JSON) -> back up the user-authored content before self-healing
+    await copyFile(SKINS_PATH(), `${SKINS_PATH()}.bak`);
+    return undefined;
+  }
+  const parsed = SkinsFileSchema.safeParse(json);
+  if (parsed.success) return parsed.data;
+  // corrupt (wrong shape) -> back up the user-authored content before self-healing
+  await copyFile(SKINS_PATH(), `${SKINS_PATH()}.bak`);
+  return undefined;
+}
+
+export async function loadSkinsAtStartup(): Promise<void> {
+  current = (await readAndValidate()) ?? DEFAULT_SKINS_FILE;
+}
+
+/** Re-reads on window focus; a failed read never touches `current`. */
+export async function rereadSkinsOnFocus(): Promise<void> {
+  const next = await readAndValidate();
+  if (next !== undefined) {
+    current = next;
+    listeners.forEach((listener) => listener(current.skins));
+  }
+}
+
+export function getSkins(): SkinsFile {
+  return current;
+}
+
+export async function setSkins(skins: Skin[]): Promise<SkinsFile> {
+  current = SkinsFileSchema.parse({ skins });
+  await atomicWriteFile(SKINS_PATH(), `${JSON.stringify(current, null, 2)}\n`);
+  listeners.forEach((listener) => listener(current.skins));
+  return current;
+}
+
+export function getActiveSkinName(): string | undefined {
+  return activeSkinName;
+}
+
+export function setActiveSkinName(name: string): void {
+  if (!current.skins.some((skin) => skin.name === name)) {
+    throw new Error(`Unknown skin "${name}"`);
+  }
+  activeSkinName = name;
+  listeners.forEach((listener) => listener(current.skins));
+}
+
+export function onSkinsChange(listener: (skins: Skin[]) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function registerSkinsIpcHandlers(): void {
+  registerHandler(SKINS_CHANNELS.list, isTrustedSender, () => getSkins().skins);
+  registerHandler(SKINS_CHANNELS.getActive, isTrustedSender, () => getActiveSkinName());
+  registerHandler(SKINS_CHANNELS.setActive, isTrustedSender, (_event, name) => {
+    if (typeof name !== 'string') {
+      throw new Error('skins:setActive requires a string skin name');
+    }
+    setActiveSkinName(name);
+  });
+}
