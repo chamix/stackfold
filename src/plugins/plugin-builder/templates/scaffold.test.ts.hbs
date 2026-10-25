@@ -1,0 +1,12 @@
+import { describe, expect, it } from 'vitest';
+import { compileScaffold, type ScaffoldDefinition } from '../../core/authoring.js';
+import { JsonLogicExpressionEvaluator } from '../../infra/expressionEvaluator.js';
+import definition from './scaffold.js';
+
+describe('{{pluginId}} — generated ScaffoldDefinition', () => {
+  it('parses/compiles via compileScaffold() without throwing', async () => {
+    const resolved =
+      typeof definition === 'function' ? await (definition as () => unknown | Promise<unknown>)() : definition;
+    expect(() => compileScaffold(resolved as ScaffoldDefinition, new JsonLogicExpressionEvaluator())).not.toThrow();
+  });
+});

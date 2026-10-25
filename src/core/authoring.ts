@@ -338,6 +338,21 @@ const writeFileSchema = z.object({
    * pre-escaped. Omitted (or empty) reproduces today's behavior exactly.
    */
   jsonEscapeKeys: z.array(z.string()).optional(),
+  /**
+   * Names of top-level context (answers) keys whose *string* value must be
+   * escaped for a single-quoted JS/TS string-literal position before
+   * `content` is Handlebars-rendered (Task 042 review follow-up,
+   * review_report.md Blocking item 2) — for a scaffold author whose
+   * `content` places a free-text answer inside a single-quoted TS string
+   * literal (e.g. a generated `scaffold.ts`), where an unescaped apostrophe
+   * would otherwise produce an unterminated string literal. Resolved by
+   * `escapeForJsContext()` below: plain TS pre-processing of the Handlebars
+   * context object, independent of (and composable with) `jsonEscapeKeys`
+   * — same shape, same never-answers-controlled author-chosen-list
+   * reasoning, different escaping target. Omitted (or empty) reproduces
+   * today's behavior exactly.
+   */
+  jsEscapeKeys: z.array(z.string()).optional(),
 });
 
 const runCommandSchema = z.object({
@@ -374,6 +389,34 @@ function escapeForJsonContext(ctx: Record<string, unknown>, keys: readonly strin
   return escaped;
 }
 
+/**
+ * Shallow copy of `ctx` with each named key's *string* value replaced by
+ * its single-quoted-JS/TS-string-literal-escaped form — backslashes
+ * escaped first, then single quotes (order matters: escaping the quote
+ * first would re-escape the backslash just introduced, under-escaping the
+ * result) — assuming the template itself already supplies the surrounding
+ * single quotes (true of every current call site). Also escapes newlines/
+ * carriage returns, since a literal line break breaks a single-line string
+ * literal the same way an unescaped quote does. Keys absent from `ctx`,
+ * and non-string values, pass through unchanged. Plain TS, not a
+ * Handlebars helper — see `writeFileSchema`'s `jsEscapeKeys` doc comment
+ * for why.
+ */
+function escapeForJsContext(ctx: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const escaped: Record<string, unknown> = { ...ctx };
+  for (const key of keys) {
+    const value = escaped[key];
+    if (typeof value === 'string') {
+      escaped[key] = value
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
+    }
+  }
+  return escaped;
+}
+
 function trimTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, '');
 }
@@ -399,13 +442,18 @@ registerAction('writeFile', {
   // never expression-resolved — so it's compiled as a Handlebars template
   // against real `answers` without ever becoming an answers-controlled
   // template itself. See this module's header comment and `resolveParams`.
-  // `jsonEscapeKeys` joins it for the same reason: it names *which* context
-  // keys get escaped, an author-chosen list, never an answers-controlled
-  // value (see `writeFileSchema`'s own doc comment).
-  literalKeys: ['content', 'jsonEscapeKeys'],
+  // `jsonEscapeKeys`/`jsEscapeKeys` join it for the same reason: each names
+  // *which* context keys get escaped, an author-chosen list, never an
+  // answers-controlled value (see `writeFileSchema`'s own doc comments).
+  literalKeys: ['content', 'jsonEscapeKeys', 'jsEscapeKeys'],
   resolve: (params, ctx): FileContribution => {
-    const { path, content, strategy, jsonEscapeKeys } = params as z.infer<typeof writeFileSchema>;
-    const renderCtx = jsonEscapeKeys && jsonEscapeKeys.length > 0 ? escapeForJsonContext(ctx, jsonEscapeKeys) : ctx;
+    const { path, content, strategy, jsonEscapeKeys, jsEscapeKeys } = params as z.infer<typeof writeFileSchema>;
+    // Independent, composable passes: each only touches the keys it names,
+    // in isolation from the other — order between the two doesn't matter
+    // functionally since no current call site needs both on the same key.
+    let renderCtx = ctx;
+    if (jsEscapeKeys && jsEscapeKeys.length > 0) renderCtx = escapeForJsContext(renderCtx, jsEscapeKeys);
+    if (jsonEscapeKeys && jsonEscapeKeys.length > 0) renderCtx = escapeForJsonContext(renderCtx, jsonEscapeKeys);
     return { path, content: compileTemplate(content, renderCtx), ...(strategy ? { strategy } : {}) };
   },
 });
@@ -579,5 +627,55 @@ registerAction('deriveAnswer', {
         answers[to] = new Date().getFullYear();
         break;
     }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// runHookCommand (Task 042, D-B —
+// .agents/specs/042-plugin-builder-ts-authoring.md "Nueva vocabulary"). A
+// general-purpose, reusable "hook" action that runs an external command via
+// `ports.processRunner.run()` with the real invoking process's cwd — never
+// `targetDir`. Deliberately the `tag:'hook'` counterpart to the existing
+// `runCommand` (`tag:'process'`) action: same params shape (`command`,
+// `args`), different tag and a structurally different cwd semantic.
+// `runCommand`-as-a-`PostActionDefinition` is always run with `cwd:
+// targetDir` (`core/orchestrator.ts`'s `runPostActions()` hardcodes this for
+// every `tag:'process'` step) — the wrong cwd for a scaffold (like
+// plugin-builder) whose own `targetDir` is not the repo root it needs to
+// invoke a sibling CLI command against. A hook has no such constraint: it
+// runs with the same unrestricted ports the orchestrator itself has, so
+// omitting `options.cwd` entirely when calling `ports.processRunner.run()`
+// lets `ExecaProcessRunner` (`infra/processRunner.ts`) fall through to
+// execa's own default — the real cwd of the process that invoked `stackfold
+// init` in the first place.
+//
+// `literalKeys: []` — deliberate, unlike `patchFile`/`deriveAnswer`: neither
+// `command` nor `args` carries the "controls where a mutation lands"
+// semantics that justify protecting a field from expression resolution
+// there. `command` is normally an author-chosen literal by nature (a fixed
+// binary name); `args` legitimately needs values computed from `answers`
+// (e.g. a generated plugin's own id interpolated into a synth invocation),
+// exactly like `runCommand`'s own `args` already supports via the existing,
+// generic `resolveParams()`/`resolveValue()` pipeline — no new resolution
+// mechanism introduced for this action.
+//
+// No `cwd` field in `runHookCommandSchema` at all — deliberate: the cwd is
+// always "the cwd real of the invoking process", never configurable by the
+// scaffold author, so the "never targetDir" guarantee is structural, not an
+// option someone could pass wrong.
+// ---------------------------------------------------------------------------
+
+const runHookCommandSchema = z.object({
+  command: z.string().trim().min(1, 'runHookCommand requires a non-empty "command"'),
+  args: z.array(z.string()).default([]),
+});
+
+registerAction('runHookCommand', {
+  tag: 'hook',
+  schema: runHookCommandSchema,
+  literalKeys: [],
+  handler: async (params, ports): Promise<void> => {
+    const { command, args } = params as z.infer<typeof runHookCommandSchema>;
+    await ports.processRunner.run(command, args); // cwd deliberately omitted — see header comment above.
   },
 });
