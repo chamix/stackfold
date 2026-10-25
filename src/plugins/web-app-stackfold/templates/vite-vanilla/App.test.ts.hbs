@@ -1,0 +1,11 @@
+import { describe, expect, it } from 'vitest';
+import { renderApp } from './main.js';
+
+describe('renderApp', () => {
+  it('renders a <main> element containing a heading', () => {
+    const container = document.createElement('div');
+    renderApp(container);
+    expect(container.querySelector('main')).not.toBeNull();
+    expect(container.querySelector('h1')).not.toBeNull();
+  });
+});

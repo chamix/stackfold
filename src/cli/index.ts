@@ -19,7 +19,6 @@ import { InquirerPrompter } from '../infra/prompter.js';
 import { compileScaffold, type ScaffoldDefinition } from '../core/authoring.js';
 import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';
 import { electronTsPlugin } from '../plugins/electron-ts/index.js';
-import { webAppSpaPlugin, webAppStandaloneHtmlPlugin } from '../plugins/web-app/index.js';
 // stackfold-plugin-imports:end
 
 /**
@@ -42,13 +41,17 @@ const expressionEvaluator = new JsonLogicExpressionEvaluator();
 
 const registry = new StaticPluginRegistry([
   electronTsPlugin,
-  webAppSpaPlugin,
-  webAppStandaloneHtmlPlugin,
   compileScaffold(
     (await import('../plugins/electron-stackfold/scaffold.json', { with: { type: 'json' } })).default as ScaffoldDefinition,
     expressionEvaluator
   ),
   compileScaffold((await import('../plugins/plugin-builder/scaffold.js')).default, expressionEvaluator),
+  // web-app-stackfold (Task 043) compiles from its own `scaffold.js`, not
+  // `scaffold.json` — same reason as `plugin-builder` above: its
+  // `appName`/`description`/`author` questions carry `validate: toValidate(...)`
+  // closures (function values JSON cannot carry), so a JSON-compiled
+  // runtime path would silently drop them.
+  compileScaffold((await import('../plugins/web-app-stackfold/scaffold.js')).default, expressionEvaluator),
   // stackfold-plugin-registry:end
 ]);
 

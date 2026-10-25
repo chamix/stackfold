@@ -353,6 +353,44 @@ const writeFileSchema = z.object({
    * today's behavior exactly.
    */
   jsEscapeKeys: z.array(z.string()).optional(),
+  /**
+   * Names of top-level context (answers) keys whose *string* value must be
+   * HTML-escaped (`&` first, then `<`, `>`, `"`, `'`) before `content` is
+   * Handlebars-rendered (Task 043, §"Required core/ amendment" —
+   * .agents/specs/043-electron-stackfold-web-app-reauthor.md) — for a
+   * scaffold author whose `content` places a free-text answer inside an
+   * HTML text node or a double-quoted attribute (e.g. a generated
+   * `index.html`). Mirrors `jsonEscapeKeys`/`jsEscapeKeys` exactly: same
+   * shape, same never-answers-controlled author-chosen-list reasoning,
+   * independent and composable with both, different escaping target.
+   * Resolved by `escapeForHtmlContext()` below, reusing the exact escaping
+   * order the former hand-rolled `web-app/shared-questions.ts`'s
+   * `escapeHtml()` already used (Task 014's real XSS fix, carried forward
+   * so this port doesn't silently reintroduce it — see
+   * `src/plugins/web-app-stackfold/scaffold.ts`'s own header comment).
+   * Omitted (or empty) reproduces today's behavior exactly.
+   */
+  htmlEscapeKeys: z.array(z.string()).optional(),
+  /**
+   * Names of top-level context (answers) keys whose *string* value must
+   * have any case-insensitive `</script` substring broken up (`<\/script`)
+   * before `content` is Handlebars-rendered (Task 043 review follow-up,
+   * approved alongside `htmlEscapeKeys` above) — for a scaffold author
+   * whose `content` places a free-text answer inside a Vue SFC's `<script
+   * setup>` block (e.g. a generated `App.vue`), where the SFC parser scans
+   * for that literal tag-closing text during its own tag-scanning parse
+   * phase, with no awareness of JS string-literal context — an unescaped
+   * `</script` there would split the file into two sibling `<script>`
+   * blocks regardless of what valid JS surrounds it. Mirrors
+   * `jsonEscapeKeys`/`jsEscapeKeys`/`htmlEscapeKeys` exactly: same shape,
+   * same never-answers-controlled author-chosen-list reasoning,
+   * independent and composable with all three, different escaping target.
+   * Resolved by `escapeScriptCloseContext()` below, reusing the exact
+   * `escapeScriptClose()` transform the former
+   * `web-app/fragments/vite-vue.ts` already used. Omitted (or empty)
+   * reproduces today's behavior exactly.
+   */
+  scriptCloseEscapeKeys: z.array(z.string()).optional(),
 });
 
 const runCommandSchema = z.object({
@@ -417,6 +455,65 @@ function escapeForJsContext(ctx: Record<string, unknown>, keys: readonly string[
   return escaped;
 }
 
+/**
+ * Shallow copy of `ctx` with each named key's *string* value replaced by
+ * its HTML-escaped form — `&` first (so it never double-escapes the
+ * entities it just produced), then `<`, `>`, `"`, `'` — assuming the
+ * template itself places the value inside an HTML text node or a
+ * double-quoted attribute (true of every current call site). Keys absent
+ * from `ctx`, and non-string values, pass through unchanged. Plain TS, not
+ * a Handlebars helper — see `writeFileSchema`'s `htmlEscapeKeys` doc
+ * comment for why. Same five-character escaping order as the former
+ * hand-rolled `web-app/shared-questions.ts`'s `escapeHtml()` (Task 014) —
+ * reused here, not re-derived, so this port carries the exact same
+ * protection forward.
+ *
+ * Exported (Task 043 review follow-up, `tests/unit/core-validation-injection.test.ts`'s
+ * SEC-001a adversarial matrix): the former `web-app/shared-questions.ts`'s
+ * `escapeHtml()` was a standalone, directly-testable sink; once `web-app/`
+ * is deleted, this is the one surviving equivalent — exported so that
+ * shared matrix can still unit-test the escaping sink itself directly,
+ * independent of any one plugin's `buildBlueprint()` composition.
+ */
+export function escapeForHtmlContext(ctx: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const escaped: Record<string, unknown> = { ...ctx };
+  for (const key of keys) {
+    const value = escaped[key];
+    if (typeof value === 'string') {
+      escaped[key] = value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+  }
+  return escaped;
+}
+
+/**
+ * Shallow copy of `ctx` with each named key's *string* value replaced by
+ * a version where every case-insensitive `</script` substring has a
+ * backslash inserted before the `/` (`<\/script`) — a semantically inert
+ * JS-string escape (`"\/"` evaluates to `"/"` at runtime) that still
+ * breaks up the exact character sequence a Vue SFC's own tag-scanning
+ * parser looks for, independent of any surrounding JS string-literal
+ * quoting. Keys absent from `ctx`, and non-string values, pass through
+ * unchanged. Plain TS, not a Handlebars helper — see `writeFileSchema`'s
+ * `scriptCloseEscapeKeys` doc comment for why. Same transform as the
+ * former `web-app/fragments/vite-vue.ts`'s own `escapeScriptClose()`.
+ */
+function escapeScriptCloseContext(ctx: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const escaped: Record<string, unknown> = { ...ctx };
+  for (const key of keys) {
+    const value = escaped[key];
+    if (typeof value === 'string') {
+      escaped[key] = value.replace(/<\/script/gi, '<\\/script');
+    }
+  }
+  return escaped;
+}
+
 function trimTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, '');
 }
@@ -445,15 +542,24 @@ registerAction('writeFile', {
   // `jsonEscapeKeys`/`jsEscapeKeys` join it for the same reason: each names
   // *which* context keys get escaped, an author-chosen list, never an
   // answers-controlled value (see `writeFileSchema`'s own doc comments).
-  literalKeys: ['content', 'jsonEscapeKeys', 'jsEscapeKeys'],
+  literalKeys: ['content', 'jsonEscapeKeys', 'jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'],
   resolve: (params, ctx): FileContribution => {
-    const { path, content, strategy, jsonEscapeKeys, jsEscapeKeys } = params as z.infer<typeof writeFileSchema>;
+    const { path, content, strategy, jsonEscapeKeys, jsEscapeKeys, htmlEscapeKeys, scriptCloseEscapeKeys } =
+      params as z.infer<typeof writeFileSchema>;
     // Independent, composable passes: each only touches the keys it names,
-    // in isolation from the other — order between the two doesn't matter
-    // functionally since no current call site needs both on the same key.
+    // in isolation from the other. `scriptCloseEscapeKeys` runs last,
+    // after `jsonEscapeKeys`, so a key using both (e.g. a Vue SFC's
+    // `const APP_NAME = "{{appName}}";`) gets the exact same result as the
+    // old `escapeScriptClose(JSON.stringify(appName))` call order — the
+    // script-close guard applies to the already-JSON-escaped text, not the
+    // raw answer.
     let renderCtx = ctx;
     if (jsEscapeKeys && jsEscapeKeys.length > 0) renderCtx = escapeForJsContext(renderCtx, jsEscapeKeys);
     if (jsonEscapeKeys && jsonEscapeKeys.length > 0) renderCtx = escapeForJsonContext(renderCtx, jsonEscapeKeys);
+    if (htmlEscapeKeys && htmlEscapeKeys.length > 0) renderCtx = escapeForHtmlContext(renderCtx, htmlEscapeKeys);
+    if (scriptCloseEscapeKeys && scriptCloseEscapeKeys.length > 0) {
+      renderCtx = escapeScriptCloseContext(renderCtx, scriptCloseEscapeKeys);
+    }
     return { path, content: compileTemplate(content, renderCtx), ...(strategy ? { strategy } : {}) };
   },
 });

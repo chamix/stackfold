@@ -1,0 +1,12 @@
+const APP_NAME = "{{appName}}";
+
+export function renderApp(container: HTMLElement): void {
+  const main = document.createElement('main');
+  const heading = document.createElement('h1');
+  heading.textContent = APP_NAME;
+  main.appendChild(heading);
+  container.replaceChildren(main);
+}
+
+const root = document.getElementById('app');
+if (root) renderApp(root);

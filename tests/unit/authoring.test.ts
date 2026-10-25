@@ -887,6 +887,228 @@ describe('built-in action: writeFile (compose)', () => {
       });
     });
   });
+
+  // Task 043 (.agents/specs/043-electron-stackfold-web-app-reauthor.md,
+  // "Required core/ amendment"): `htmlEscapeKeys` HTML-escapes the named
+  // context values for an HTML text node / double-quoted attribute
+  // position before Handlebars renders `content` — mirrors
+  // `jsonEscapeKeys`/`jsEscapeKeys` above exactly, same shape, different
+  // escaping target. Exists because `web-app-stackfold`'s
+  // `standalone-html` fragment (ported from the old `web-app` family's
+  // hand-rolled `escapeHtml()`, Task 014's real XSS fix) would otherwise
+  // silently lose that protection: `writeFile`'s `content` is compiled
+  // with `noEscape: true` (this module's own header comment), so without
+  // this field a free-text answer placed in HTML gets zero escaping.
+  describe('htmlEscapeKeys (Task 043, "Required core/ amendment")', () => {
+    it('HTML-escapes (&, <, >, ", \' — in that order) only the named context keys, leaving others untouched', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'index.html',
+        content: '<title>{{appName}}</title><meta content="{{description}}">',
+        htmlEscapeKeys: ['appName', 'description'],
+      });
+
+      const result = kind.resolve(parsed, {
+        appName: `<img src=x onerror=alert(1)>`,
+        description: 'A & B "quoted" \'single\'',
+      });
+
+      expect(result).toEqual({
+        path: 'index.html',
+        content:
+          '<title>&lt;img src=x onerror=alert(1)&gt;</title>' +
+          '<meta content="A &amp; B &quot;quoted&quot; &#39;single&#39;">',
+      });
+    });
+
+    it('adversarial: a real <img src=x onerror=...> payload never becomes a live tag — it comes out fully entity-escaped', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'index.html',
+        content: '<main><h1>{{appName}}</h1></main>',
+        htmlEscapeKeys: ['appName'],
+      });
+
+      const result = kind.resolve(parsed, { appName: '<img src=x onerror=alert(1)>' });
+      const html = result.content.toString();
+
+      expect(html).not.toContain('<img src=x onerror=alert(1)>');
+      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    });
+
+    it('omitting htmlEscapeKeys (or an empty array) reproduces today\'s behavior exactly — no escaping', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({ path: 'a.txt', content: 'Hello {{name}}!' });
+
+      expect(kind.resolve(parsed, { name: 'World <b>bold</b>' })).toEqual({
+        path: 'a.txt',
+        content: 'Hello World <b>bold</b>!',
+      });
+    });
+
+    it('never expression-resolves "htmlEscapeKeys" — it is always the author\'s own literal list', () => {
+      const def = definition({
+        id: 'write-file-html-escape-literal',
+        steps: [
+          step('writeFile', {
+            path: 'out.html',
+            content: '<p>{{x}}</p>',
+            htmlEscapeKeys: { var: 'untrustedKeys' },
+          }),
+        ],
+      });
+      const evaluator = new FakeEvaluator();
+
+      expect(() => compileScaffold(def, evaluator).buildBlueprint({ x: '<b>a</b>', untrustedKeys: ['x'] })).toThrow();
+      expect(evaluator.calls).toEqual([]);
+    });
+
+    it('composes independently with jsonEscapeKeys/jsEscapeKeys: each applies only to its own named keys', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'mixed.txt',
+        content: '{ "json": "{{jsonVal}}" } -- jsString: \'{{jsVal}}\' -- html: {{htmlVal}}',
+        jsonEscapeKeys: ['jsonVal'],
+        jsEscapeKeys: ['jsVal'],
+        htmlEscapeKeys: ['htmlVal'],
+      });
+
+      const result = kind.resolve(parsed, {
+        jsonVal: 'has "quotes"',
+        jsVal: "has 'quotes'",
+        htmlVal: '<b>bold</b>',
+      });
+
+      expect(result).toEqual({
+        path: 'mixed.txt',
+        content:
+          '{ "json": "has \\"quotes\\"" } -- jsString: \'has \\\'quotes\\\'\' -- html: &lt;b&gt;bold&lt;/b&gt;',
+      });
+    });
+  });
+
+  // Task 043 review follow-up (approved alongside `htmlEscapeKeys` above):
+  // `scriptCloseEscapeKeys` breaks up any case-insensitive `</script`
+  // substring before `content` is Handlebars-rendered. Exists because
+  // `web-app-stackfold`'s `vite-vue` fragment ports the old
+  // `web-app/fragments/vite-vue.ts`'s `App.vue` generation, which embeds a
+  // free-text answer (`appName`) inside a `<script setup>` block via a
+  // JSON-stringified JS string literal — without this field, a payload
+  // containing a literal `</script` would split the generated SFC into two
+  // sibling `<script>` blocks during Vue's own tag-scanning parse, the
+  // exact regression the old fragment's own adversarial test ("App.vue
+  // never lets a closing-script-tag payload break the SFC's own <script>
+  // block") already guarded against.
+  describe('scriptCloseEscapeKeys (Task 043 review follow-up)', () => {
+    it('breaks up a case-insensitive </script substring for only the named context keys, leaving others untouched', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'App.vue',
+        content: 'const A = "{{a}}"; const B = "{{b}}";',
+        scriptCloseEscapeKeys: ['a'],
+      });
+
+      const result = kind.resolve(parsed, { a: 'evil</SCRIPT><script>', b: 'untouched</script>' });
+
+      // Matches the old `escapeScriptClose()`'s own replacement text
+      // exactly: `.replace(/<\/script/gi, '<\\/script')` substitutes a
+      // fixed, lowercase literal regardless of the matched text's own
+      // casing — a case-insensitive *match*, not a case-preserving one.
+      expect(result).toEqual({
+        path: 'App.vue',
+        content: 'const A = "evil<\\/script><script>"; const B = "untouched</script>";',
+      });
+    });
+
+    it('composes with jsonEscapeKeys in the same order the old vite-vue.ts fragment applied them: JSON-string-escape first, then the script-close guard', () => {
+      // Mirrors the old web-app/fragments/vite-vue.ts's own
+      // `escapeScriptClose(JSON.stringify(ctx.appName))` call order
+      // exactly — `jsonEscapeKeys` resolves first, `scriptCloseEscapeKeys`
+      // runs against its already-escaped result (core/authoring.ts's own
+      // `writeFile` resolver doc comment).
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'App.vue',
+        content: 'const APP_NAME = "{{appName}}";',
+        jsonEscapeKeys: ['appName'],
+        scriptCloseEscapeKeys: ['appName'],
+      });
+
+      const result = kind.resolve(parsed, { appName: 'evil</script><script>alert(1)</script>' });
+
+      expect(result).toEqual({
+        path: 'App.vue',
+        content: 'const APP_NAME = "evil<\\/script><script>alert(1)<\\/script>";',
+      });
+    });
+
+    // Ported, at the writeFile-action level, from the old
+    // web-app-spa-plugin-vue.test.ts's own adversarial test of the exact
+    // same name — real @vue/compiler-sfc parse, not a hand-rolled check —
+    // proving the escaped output stays a single, well-formed <script
+    // setup> block even against this exact payload.
+    it("App.vue never lets a closing-script-tag payload break the SFC's own <script> block", async () => {
+      const { parse } = await import('@vue/compiler-sfc');
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({
+        path: 'App.vue',
+        // `\{{ APP_NAME }}` (one literal backslash immediately before the
+        // mustache, no space) is Handlebars's own escape syntax for a
+        // literal, un-evaluated `{{ APP_NAME }}` in the output — needed
+        // because this content is itself a Handlebars template compiled by
+        // `compileTemplate()`, and `{{ APP_NAME }}` is genuinely the Vue
+        // SFC's own interpolation syntax we want to end up in the
+        // rendered output, not a Handlebars variable reference (there is
+        // no `APP_NAME` answer).
+        content:
+          '<script setup lang="ts">\nconst APP_NAME = "{{appName}}";\n</script>\n\n<template>\n  <main>\n    <h1>\\{{ APP_NAME }}</h1>\n  </main>\n</template>\n',
+        jsonEscapeKeys: ['appName'],
+        scriptCloseEscapeKeys: ['appName'],
+      });
+
+      const payload = 'evil</script><script>alert(1)</script>';
+      const result = kind.resolve(parsed, { appName: payload });
+      const src = result.content.toString();
+
+      const { descriptor, errors } = parse(src, { filename: 'App.vue' });
+      expect(errors).toEqual([]);
+      expect(descriptor.scriptSetup?.content).toContain('APP_NAME');
+      expect(descriptor.template?.content).toContain('{{ APP_NAME }}');
+
+      // eslint-disable-next-line no-eval
+      const runtimeValue: unknown = eval(descriptor.scriptSetup!.content.match(/APP_NAME = (.*);/)![1]!);
+      expect(runtimeValue).toBe(payload);
+    });
+
+    it('omitting scriptCloseEscapeKeys (or an empty array) reproduces today\'s behavior exactly — no escaping', () => {
+      const kind = resolveAction('writeFile') as Extract<ActionKind, { tag: 'compose' }>;
+      const parsed = kind.schema.parse({ path: 'a.txt', content: 'Hello {{name}}!' });
+
+      expect(kind.resolve(parsed, { name: 'World</script>' })).toEqual({
+        path: 'a.txt',
+        content: 'Hello World</script>!',
+      });
+    });
+
+    it('never expression-resolves "scriptCloseEscapeKeys" — it is always the author\'s own literal list', () => {
+      const def = definition({
+        id: 'write-file-script-close-escape-literal',
+        steps: [
+          step('writeFile', {
+            path: 'out.vue',
+            content: 'const x = "{{x}}";',
+            scriptCloseEscapeKeys: { var: 'untrustedKeys' },
+          }),
+        ],
+      });
+      const evaluator = new FakeEvaluator();
+
+      expect(() =>
+        compileScaffold(def, evaluator).buildBlueprint({ x: '</script>', untrustedKeys: ['x'] })
+      ).toThrow();
+      expect(evaluator.calls).toEqual([]);
+    });
+  });
 });
 
 describe('built-in action: runCommand (process)', () => {

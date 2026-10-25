@@ -7,28 +7,49 @@ import {
   descriptionSchema,
   toValidate,
 } from '../../src/core/validation.js';
-import { escapeHtml } from '../../src/plugins/web-app/shared-questions.js';
+import { compileScaffold, escapeForHtmlContext, type ScaffoldDefinition } from '../../src/core/authoring.js';
+import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
 import { electronTsPlugin } from '../../src/plugins/electron-ts/index.js';
-import { webAppSpaPlugin } from '../../src/plugins/web-app/spa.js';
-import { webAppStandaloneHtmlPlugin } from '../../src/plugins/web-app/standalone-html.js';
+import webAppStackfoldDefinition from '../../src/plugins/web-app-stackfold/scaffold.js';
 import type { Answers, StackfoldPlugin } from '../../src/core/types.js';
 
 /**
  * SEC-001 — the adversarial payload matrix
  * (.agents/specs/sec-001-input-injection-validation.md, Step 1 table),
  * run against both the zod schemas directly (fast, no I/O — Invariant B,
- * SEC-001b) and the real render sinks across all three plugins
- * (Invariant A, SEC-001a) — a schema-only test would miss a regression in
- * `escapeHtml()`/`escapeScriptClose()`/`json()` themselves.
+ * SEC-001b) and the real render sinks across both plugins (Invariant A,
+ * SEC-001a) — a schema-only test would miss a regression in
+ * `escapeForHtmlContext()`/`escapeScriptCloseContext()`/`json()`
+ * themselves.
  *
  * Each plugin's own test file (`electron-ts-plugin.test.ts`,
- * `web-app-spa-plugin*.test.ts`, `web-app-standalone-html-plugin.test.ts`)
- * still owns its plugin-specific adversarial coverage (e.g. the full
- * real-`@vue/compiler-sfc` render-function proof for `vite-vue.ts`'s
- * `escapeScriptClose()`). This file is the shared matrix: one place that
- * runs every row across every plugin, so no plugin can regress silently
- * by being the one nobody re-checked.
+ * `web-app-stackfold-plugin*.test.ts`) still owns its plugin-specific
+ * adversarial coverage (e.g. the full real-`@vue/compiler-sfc`
+ * render-function proof for `vite-vue.ts`'s `scriptCloseEscapeKeys`
+ * defense). This file is the shared matrix: one place that runs every row
+ * across every plugin, so no plugin can regress silently by being the one
+ * nobody re-checked.
+ *
+ * Task 043 (.agents/specs/043-electron-stackfold-web-app-reauthor.md):
+ * `web-app-spa`/`web-app-standalone-html` (SK-ADR-001, `src/plugins/
+ * web-app/`) were merged into one plugin, `web-app-stackfold` (SK-ADR-003),
+ * with the old `framework` answer + two-plugin split collapsing into a
+ * single `appType` select (`spa-react`/`spa-vue`/`spa-vanilla`/
+ * `standalone-html`). Every row below that used to reference
+ * `webAppSpaPlugin`/`webAppStandaloneHtmlPlugin` now references the one
+ * compiled `webAppStackfoldPlugin`, with the right `appType` answer in
+ * place of the old `framework` key — same assertions, same file paths,
+ * same adversarial payloads, mechanical repoint only. The former
+ * standalone `escapeHtml()` export (`web-app/shared-questions.ts`) is gone
+ * along with `web-app/` itself; its exact replacement,
+ * `escapeForHtmlContext()` (`core/authoring.ts`, `htmlEscapeKeys`'s own
+ * resolver), is exported for the same direct, plugin-independent
+ * sink-level check this row always did.
  */
+const webAppStackfoldPlugin: StackfoldPlugin = compileScaffold(
+  webAppStackfoldDefinition as ScaffoldDefinition,
+  new JsonLogicExpressionEvaluator()
+);
 
 function fileContent(plugin: StackfoldPlugin, answers: Answers, path: string): string {
   const entry = plugin.buildBlueprint(answers).files.find((f) => f.path === path);
@@ -37,15 +58,20 @@ function fileContent(plugin: StackfoldPlugin, answers: Answers, path: string): s
 }
 
 const BASE_ELECTRON: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace' };
-const BASE_REACT: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace', framework: 'react' };
-const BASE_VUE: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace', framework: 'vue' };
+const BASE_REACT: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace', appType: 'spa-react' };
+const BASE_VUE: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace', appType: 'spa-vue' };
 const BASE_VANILLA: Answers = {
   appName: 'Demo App',
   description: 'A demo',
   author: 'Ada Lovelace',
-  framework: 'vanilla',
+  appType: 'spa-vanilla',
 };
-const BASE_STANDALONE: Answers = { appName: 'Demo App', description: 'A demo', author: 'Ada Lovelace' };
+const BASE_STANDALONE: Answers = {
+  appName: 'Demo App',
+  description: 'A demo',
+  author: 'Ada Lovelace',
+  appType: 'standalone-html',
+};
 
 describe('core/validation.ts — schemas (direct, no I/O)', () => {
   it('exports MAX_PACKAGE_NAME_LENGTH as npm\'s 214-character registry limit', () => {
@@ -154,11 +180,11 @@ describe('core/validation.ts — schemas (direct, no I/O)', () => {
 });
 
 describe('SEC-001a — adversarial matrix against the real render sinks', () => {
-  describe('row: <script>alert(1)</script> — HTML text-node escaping (escapeHtml, all 3 plugins)', () => {
+  describe('row: <script>alert(1)</script> — HTML text-node escaping (escapeForHtmlContext, all plugins)', () => {
     const payload = '<script>alert(1)</script>';
 
-    it('escapeHtml() (web-app\'s exported sink) neutralizes it directly', () => {
-      const escaped = escapeHtml(payload);
+    it('escapeForHtmlContext() (the writeFile htmlEscapeKeys sink) neutralizes it directly', () => {
+      const escaped = escapeForHtmlContext({ value: payload }, ['value']).value as string;
       expect(escaped).not.toContain('<script>');
       expect(escaped).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
@@ -170,27 +196,22 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
     });
 
     it.each([
-      ['react', BASE_REACT],
-      ['vue', BASE_VUE],
-      ['vanilla', BASE_VANILLA],
-    ])('web-app-spa (%s): the rendered index.html never contains a live <script> tag from appName/description', (_framework, base) => {
-      const html = fileContent(webAppSpaPlugin, { ...base, appName: payload, description: payload }, 'index.html');
-      expect(html).not.toContain('<script>alert(1)</script>');
-      expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
-    });
-
-    it('web-app-standalone-html: the rendered index.html never contains a live <script> tag from appName/description', () => {
-      const html = fileContent(webAppStandaloneHtmlPlugin, { ...BASE_STANDALONE, appName: payload, description: payload }, 'index.html');
+      ['spa-react', BASE_REACT],
+      ['spa-vue', BASE_VUE],
+      ['spa-vanilla', BASE_VANILLA],
+      ['standalone-html', BASE_STANDALONE],
+    ])('web-app-stackfold (appType: %s): the rendered index.html never contains a live <script> tag from appName/description', (_appType, base) => {
+      const html = fileContent(webAppStackfoldPlugin, { ...base, appName: payload, description: payload }, 'index.html');
       expect(html).not.toContain('<script>alert(1)</script>');
       expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
   });
 
-  describe('row: </script><script>evil()</script> — SFC parser </script>-matching (escapeScriptClose, vite-vue)', () => {
+  describe('row: </script><script>evil()</script> — SFC parser </script>-matching (scriptCloseEscapeKeys, vite-vue)', () => {
     const payload = '</script><script>evil()</script>';
 
     it('App.vue parses as a single, uncorrupted <script setup> block, and the escaped literal still evaluates back to the exact original payload', () => {
-      const vue = fileContent(webAppSpaPlugin, { ...BASE_VUE, appName: payload }, 'src/App.vue');
+      const vue = fileContent(webAppStackfoldPlugin, { ...BASE_VUE, appName: payload }, 'src/App.vue');
       const { descriptor, errors } = parse(vue, { filename: 'App.vue' });
       expect(errors).toEqual([]);
       expect(descriptor.scriptSetup?.content).toContain('APP_NAME');
@@ -207,8 +228,8 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
 
     it.each([
       ['electron-ts', electronTsPlugin, BASE_ELECTRON],
-      ['web-app-spa (react)', webAppSpaPlugin, BASE_REACT],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin, BASE_STANDALONE],
+      ['web-app-stackfold (spa-react)', webAppStackfoldPlugin, BASE_REACT],
+      ['web-app-stackfold (standalone-html)', webAppStackfoldPlugin, BASE_STANDALONE],
     ])('%s: no adversarial appName/description/author ever produces a "run-command" postAction or leaks into any postAction', (_name, plugin, base) => {
       for (const payload of payloads) {
         const blueprint = (plugin as StackfoldPlugin).buildBlueprint({
@@ -226,7 +247,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
   });
 
   describe('row: U+2028/U+2029 (JS line/paragraph separators) — JSON.stringify-into-JS-source stays valid JS', () => {
-    const payload = 'Before After End';
+    const payload = 'Before After End';
 
     it('electron-ts: package.json\'s productName round-trips through real JSON.parse unchanged', () => {
       const pkg = fileContent(electronTsPlugin, { ...BASE_ELECTRON, appName: `App${payload}` }, 'package.json');
@@ -235,7 +256,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
     });
 
     it('vite-react: the APP_NAME module constant is valid, evaluable JS source (no unescaped line/paragraph separator breaks the statement)', () => {
-      const tsx = fileContent(webAppSpaPlugin, { ...BASE_REACT, appName: `App${payload}` }, 'src/App.tsx');
+      const tsx = fileContent(webAppStackfoldPlugin, { ...BASE_REACT, appName: `App${payload}` }, 'src/App.tsx');
       const line = tsx.split('\n').find((l) => l.startsWith('const APP_NAME'));
       expect(line).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -244,7 +265,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
     });
 
     it('vite-vue: the APP_NAME module constant inside <script setup> is valid, evaluable JS source', () => {
-      const vue = fileContent(webAppSpaPlugin, { ...BASE_VUE, appName: `App${payload}` }, 'src/App.vue');
+      const vue = fileContent(webAppStackfoldPlugin, { ...BASE_VUE, appName: `App${payload}` }, 'src/App.vue');
       const line = vue.split('\n').find((l) => l.startsWith('const APP_NAME'));
       expect(line).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -253,7 +274,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
     });
 
     it('vite-vanilla: the APP_NAME module constant is valid, evaluable JS source', () => {
-      const ts = fileContent(webAppSpaPlugin, { ...BASE_VANILLA, appName: `App${payload}` }, 'src/main.ts');
+      const ts = fileContent(webAppStackfoldPlugin, { ...BASE_VANILLA, appName: `App${payload}` }, 'src/main.ts');
       const line = ts.split('\n').find((l) => l.startsWith('const APP_NAME'));
       expect(line).toBeDefined();
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
@@ -273,8 +294,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
 
     it.each([
       ['electron-ts', electronTsPlugin],
-      ['web-app-spa', webAppSpaPlugin],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin],
+      ['web-app-stackfold', webAppStackfoldPlugin],
     ])('%s: the appName/description/author questions\' validate() rejects it at the Prompter boundary', (_name, plugin) => {
       for (const id of ['appName', 'description', 'author']) {
         const question = (plugin as StackfoldPlugin).questions().find((q) => q.id === id);
@@ -287,8 +307,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
   describe('row: "   " (whitespace-only) — appName rejected, description/author trimmed-accepted', () => {
     it.each([
       ['electron-ts', electronTsPlugin],
-      ['web-app-spa', webAppSpaPlugin],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin],
+      ['web-app-stackfold', webAppStackfoldPlugin],
     ])('%s: appName validate() rejects "   "', (_name, plugin) => {
       const question = (plugin as StackfoldPlugin).questions().find((q) => q.id === 'appName');
       expect(question?.validate?.('   ')).toEqual(expect.any(String));
@@ -296,8 +315,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
 
     it.each([
       ['electron-ts', electronTsPlugin],
-      ['web-app-spa', webAppSpaPlugin],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin],
+      ['web-app-stackfold', webAppStackfoldPlugin],
     ])('%s: description/author validate() accepts "   " (optional, trimmed)', (_name, plugin) => {
       for (const id of ['description', 'author']) {
         const question = (plugin as StackfoldPlugin).questions().find((q) => q.id === id);
@@ -309,8 +327,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
   describe('row: embedded \\n — rejected in every single-line field', () => {
     it.each([
       ['electron-ts', electronTsPlugin],
-      ['web-app-spa', webAppSpaPlugin],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin],
+      ['web-app-stackfold', webAppStackfoldPlugin],
     ])('%s: appName/description/author validate() all reject an embedded newline', (_name, plugin) => {
       for (const id of ['appName', 'description', 'author']) {
         const question = (plugin as StackfoldPlugin).questions().find((q) => q.id === id);
@@ -324,8 +341,7 @@ describe('SEC-001a — adversarial matrix against the real render sinks', () => 
 
     it.each([
       ['electron-ts', electronTsPlugin],
-      ['web-app-spa', webAppSpaPlugin],
-      ['web-app-standalone-html', webAppStandaloneHtmlPlugin],
+      ['web-app-stackfold', webAppStackfoldPlugin],
     ])('%s: appName validate() accepts it', (_name, plugin) => {
       const question = (plugin as StackfoldPlugin).questions().find((q) => q.id === 'appName');
       expect(question?.validate?.(payload)).toBe(true);

@@ -1,0 +1,577 @@
+{
+  "id": "web-app-stackfold",
+  "description": "Web app (standalone HTML, or an SPA in React/Vue/vanilla + Vite) — merges the old web-app-spa and web-app-standalone-html plugins into one, authored via the scaffold-authoring system (SK-ADR-003).",
+  "help": {
+    "name": "Web App",
+    "details": "Choose one appType during init: a single, dependency-free standalone HTML file (no server, no network after load), or a Vite-powered single-page app in React, Vue, or plain vanilla TS (client-side routing-ready, no SSR). vitest + eslint are wired in for every SPA choice, regardless of framework. Replaces the old web-app-spa/web-app-standalone-html plugins — same generated output per choice, one merged plugin."
+  },
+  "questions": [
+    {
+      "id": "appName",
+      "message": "Application name",
+      "type": "input",
+      "default": "my-web-app"
+    },
+    {
+      "id": "description",
+      "message": "Short description",
+      "type": "input",
+      "default": "A web app."
+    },
+    {
+      "id": "author",
+      "message": "Author (optional, used for package.json and an MIT LICENSE)",
+      "type": "input",
+      "default": ""
+    },
+    {
+      "id": "appType",
+      "message": "App type",
+      "type": "select",
+      "choices": [
+        "standalone-html",
+        "spa-react",
+        "spa-vue",
+        "spa-vanilla"
+      ],
+      "default": "spa-react"
+    }
+  ],
+  "steps": [
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"name\": \"{{packageName}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "tsconfig.json",
+        "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"Bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\n    \"src/**/*.ts\",\n    \"src/**/*.tsx\",\n    \"vite.config.ts\"\n  ]\n}\n"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": ".gitignore",
+        "content": "node_modules/\ndist/\n",
+        "strategy": "append"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "LICENSE",
+        "content": "MIT License\n\nCopyright (c) {{year}} {{author}}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+      },
+      "when": {
+        "and": [
+          {
+            "!=": [
+              {
+                "var": "appType"
+              },
+              "standalone-html"
+            ]
+          },
+          {
+            "!==": [
+              {
+                "var": "author"
+              },
+              ""
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "action": "gitInit",
+      "params": {},
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"dependencies\": {\n    \"react\": \"^19.3.0\",\n    \"react-dom\": \"^19.3.0\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-react\": \"^6.1.2\",\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"@testing-library/react\": \"^16.3.3\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "vite.config.ts",
+        "content": "import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\n\nexport default defineConfig({\n  plugins: [react()],\n});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "index.html",
+        "content": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"description\" content=\"{{description}}\" />\n    <title>{{appName}}</title>\n  </head>\n  <body>\n    <div id=\"root\"></div>\n    <script type=\"module\" src=\"/src/main.tsx\"></script>\n  </body>\n</html>\n",
+        "htmlEscapeKeys": [
+          "appName",
+          "description"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main.tsx",
+        "content": "import { StrictMode } from 'react';\nimport { createRoot } from 'react-dom/client';\nimport { App } from './App.js';\n\nconst root = document.getElementById('root');\nif (!root) throw new Error('#root element not found');\n\ncreateRoot(root).render(\n  <StrictMode>\n    <App />\n  </StrictMode>\n);\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/App.tsx",
+        "content": "import type { JSX } from 'react';\n\nconst APP_NAME = \"{{appName}}\";\n\nexport function App(): JSX.Element {\n  return (\n    <main>\n      <h1>{APP_NAME}</h1>\n    </main>\n  );\n}\n",
+        "jsonEscapeKeys": [
+          "appName"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/App.test.tsx",
+        "content": "import { render, screen } from '@testing-library/react';\nimport { describe, expect, it } from 'vitest';\nimport { App } from './App.js';\n\ndescribe('App', () => {\n  it('renders', () => {\n    render(<App />);\n    expect(screen.getByRole('main')).toBeInTheDocument();\n  });\n});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "npmInstall",
+      "params": {},
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "vite.config.ts",
+        "content": "import { defineConfig } from 'vite';\n\nexport default defineConfig({});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "index.html",
+        "content": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"description\" content=\"{{description}}\" />\n    <title>{{appName}}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
+        "htmlEscapeKeys": [
+          "appName",
+          "description"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main.ts",
+        "content": "const APP_NAME = \"{{appName}}\";\n\nexport function renderApp(container: HTMLElement): void {\n  const main = document.createElement('main');\n  const heading = document.createElement('h1');\n  heading.textContent = APP_NAME;\n  main.appendChild(heading);\n  container.replaceChildren(main);\n}\n\nconst root = document.getElementById('app');\nif (root) renderApp(root);\n",
+        "jsonEscapeKeys": [
+          "appName"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/App.test.ts",
+        "content": "import { describe, expect, it } from 'vitest';\nimport { renderApp } from './main.js';\n\ndescribe('renderApp', () => {\n  it('renders a <main> element containing a heading', () => {\n    const container = document.createElement('div');\n    renderApp(container);\n    expect(container.querySelector('main')).not.toBeNull();\n    expect(container.querySelector('h1')).not.toBeNull();\n  });\n});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "npmInstall",
+      "params": {},
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vanilla"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"dependencies\": {\n    \"vue\": \"^3.5.44\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-vue\": \"^6.0.10\",\n    \"@testing-library/vue\": \"^8.1.0\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "vite.config.ts",
+        "content": "import { defineConfig } from 'vite';\nimport vue from '@vitejs/plugin-vue';\n\nexport default defineConfig({\n  plugins: [vue()],\n});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "index.html",
+        "content": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"description\" content=\"{{description}}\" />\n    <title>{{appName}}</title>\n  </head>\n  <body>\n    <div id=\"app\"></div>\n    <script type=\"module\" src=\"/src/main.ts\"></script>\n  </body>\n</html>\n",
+        "htmlEscapeKeys": [
+          "appName",
+          "description"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/main.ts",
+        "content": "import { createApp } from 'vue';\nimport App from './App.vue';\n\ncreateApp(App).mount('#app');\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/env.d.ts",
+        "content": "declare module '*.vue' {\n  import type { DefineComponent } from 'vue';\n\n  const component: DefineComponent<Record<string, never>, Record<string, never>, unknown>;\n  export default component;\n}\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/App.vue",
+        "content": "<script setup lang=\"ts\">\nconst APP_NAME = \"{{appName}}\";\n</script>\n\n<template>\n  <main>\n    <h1>\\{{ APP_NAME }}</h1>\n  </main>\n</template>\n",
+        "jsonEscapeKeys": [
+          "appName"
+        ],
+        "scriptCloseEscapeKeys": [
+          "appName"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/App.test.ts",
+        "content": "import { render, screen } from '@testing-library/vue';\nimport { describe, expect, it } from 'vitest';\nimport App from './App.vue';\n\ndescribe('App', () => {\n  it('renders', () => {\n    render(App);\n    expect(screen.getByRole('main')).toBeInTheDocument();\n  });\n});\n"
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "npmInstall",
+      "params": {},
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-vue"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"devDependencies\": {\n    \"vitest\": \"^5.0.4\",\n    \"jsdom\": \"^27.4.0\",\n    \"@testing-library/jest-dom\": \"^7.0.1\"\n  },\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  }\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "vitest.config.ts",
+        "content": "import { defineConfig, mergeConfig } from 'vitest/config';\nimport viteConfig from './vite.config.js';\n\nexport default mergeConfig(\n  viteConfig,\n  defineConfig({\n    test: {\n      environment: 'jsdom',\n      setupFiles: ['./src/setupTests.ts'],\n    },\n  })\n);\n"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "src/setupTests.ts",
+        "content": "import '@testing-library/jest-dom/vitest';\n"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "package.json",
+        "content": "{\n  \"devDependencies\": {\n    \"eslint\": \"^10.11.0\",\n    \"typescript-eslint\": \"^8.70.1\"\n  }\n}\n",
+        "strategy": "json-merge"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "eslint.config.js",
+        "content": "import tseslint from 'typescript-eslint';\n\nexport default tseslint.config(\n  ...tseslint.configs.recommended,\n  {\n    ignores: ['dist/**', 'node_modules/**'],\n  }\n);\n"
+      },
+      "when": {
+        "!=": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    },
+    {
+      "action": "writeFile",
+      "params": {
+        "path": "index.html",
+        "content": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"description\" content=\"{{description}}\" />\n    <title>{{appName}}</title>\n    <style>\n      body {\n        font-family: system-ui, sans-serif;\n        display: flex;\n        min-height: 100vh;\n        margin: 0;\n        align-items: center;\n        justify-content: center;\n      }\n    </style>\n  </head>\n  <body>\n    <main><h1>{{appName}}</h1></main>\n    <script>\n      // No network calls after initial load — this is a standalone,\n      // dependency-free file, not a lightweight SPA (functional_domain_webapp.md §1).\n    </script>\n  </body>\n</html>\n",
+        "htmlEscapeKeys": [
+          "appName",
+          "description"
+        ]
+      },
+      "when": {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      }
+    }
+  ],
+  "hooks": {
+    "preInit": [
+      {
+        "action": "deriveAnswer",
+        "params": {
+          "from": "appName",
+          "to": "packageName",
+          "transform": "npm-slug"
+        }
+      },
+      {
+        "action": "deriveAnswer",
+        "params": {
+          "from": "appName",
+          "to": "year",
+          "transform": "current-year"
+        }
+      }
+    ]
+  }
+}
