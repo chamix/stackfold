@@ -94,6 +94,23 @@ const WHEN_SPA_VANILLA = { '==': [{ var: 'appType' }, 'spa-vanilla'] };
 const WHEN_SPA_VUE = { '==': [{ var: 'appType' }, 'spa-vue'] };
 const WHEN_STANDALONE = { '==': [{ var: 'appType' }, 'standalone-html'] };
 
+/**
+ * Task 044 (UX-001/SK-ADR-004, rollout table) — the case that motivated
+ * SK-ADR-004: the entry point varies by `appType`, so it's a JSONLogic
+ * conditional resolved inside `buildBlueprint()`, not a static plugin
+ * literal. `standalone-html` → `index.html`; `spa-react` → `src/main.tsx`
+ * (JSX entry); `spa-vue`/`spa-vanilla` → `src/main.ts` (no JSX).
+ */
+const MAIN_FILE_BY_APP_TYPE = {
+  if: [
+    WHEN_STANDALONE,
+    'index.html',
+    WHEN_SPA_REACT,
+    'src/main.tsx',
+    'src/main.ts',
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Mount every fragment under its own namespace (Task 041), passing each its
 // own `appType`-derived gate. See this module's header comment for why mount
@@ -161,6 +178,8 @@ export default defineScaffold({
   ],
 
   steps: composed.steps,
+
+  mainFile: MAIN_FILE_BY_APP_TYPE,
 
   hooks: {
     preInit: [

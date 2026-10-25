@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { cosmiconfig } from 'cosmiconfig';
 import type { Command } from 'commander';
 import {
@@ -7,9 +7,11 @@ import {
   formatPostAction,
   runPlugin,
   type OrchestratorPorts,
+  type ScaffoldResult,
 } from '../../core/orchestrator.js';
 import type { PluginRegistry } from '../../core/ports.js';
-import type { Answers, AnswerValue } from '../../core/types.js';
+import type { Answers, AnswerValue, QuestionDefinition } from '../../core/types.js';
+import type { ProjectOpener } from '../../infra/open.js';
 import { StaticPrompter } from '../../infra/prompter.js';
 import { formatPluginListLine } from '../pluginHelp.js';
 
@@ -30,6 +32,14 @@ export interface InitCommandDependencies {
   cwd: () => string;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
+  /**
+   * Task 044 (UX-001 RF-3): opens the scaffolded folder/main file with the
+   * OS default application, at the end of a successful, interactive
+   * `init`. A CLI-layer-only dependency — never part of
+   * `OrchestratorPorts`/the plugin contract (see `infra/open.ts`'s own
+   * header comment).
+   */
+  opener: ProjectOpener;
 }
 
 /**
@@ -51,16 +61,18 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
       (value: string, prev: string[]) => [...prev, value],
       [] as string[]
     )
+    .option('--no-open', "don't prompt to open the project after a successful init")
     .action(
       async (
         stack?: string,
         directory?: string,
-        options?: { force?: boolean; config?: string; answer?: string[] }
+        options?: { force?: boolean; config?: string; answer?: string[]; open?: boolean }
       ) => {
         process.exitCode = await runInit(stack, directory, deps, {
           force: options?.force ?? false,
           config: options?.config,
           answer: options?.answer ?? [],
+          open: options?.open ?? true,
         });
       }
     );
@@ -71,7 +83,7 @@ export async function runInit(
   stack: string | undefined,
   directory: string | undefined,
   deps: InitCommandDependencies,
-  options?: { force?: boolean; config?: string; answer?: string[] }
+  options?: { force?: boolean; config?: string; answer?: string[]; open?: boolean }
 ): Promise<number> {
   const { registry, stdout, stderr } = deps;
 
@@ -111,10 +123,61 @@ export async function runInit(
       ignoreEntries: GOVERNANCE_ENTRIES,
     });
     stdout(`Scaffolded ${plugin.id} project in ${result.targetDir} (${result.filesWritten.length} files).`);
+
+    await maybePromptToOpen(result, deps, options, nonInteractiveAnswers);
+
     return 0;
   } catch (err) {
     reportFailure(err, stderr);
     return isPromptAbort(err) ? 130 : 1;
+  }
+}
+
+const OPEN_FOLDER = 'Open folder';
+const OPEN_MAIN_FILE = 'Open main file';
+const DONT_OPEN = "Don't open";
+
+/**
+ * Task 044 (UX-001 RF-1/RF-4): the post-init "open the project" prompt.
+ * Three-way skip, in this exact order (spec's own acceptance criteria,
+ * reusing `resolveNonInteractiveAnswers()`'s and UX-002's established
+ * non-interactive criteria — no new mechanism):
+ *   1. `--no-open` (`options.open === false`).
+ *   2. `init` ran non-interactively (`nonInteractiveAnswers !== undefined`
+ *      — `--config`/`--answer` were given, so `ports.prompter` is already
+ *      a `StaticPrompter`, not a real interactive one).
+ *   3. `!process.stdout.isTTY` (no interactive terminal to prompt into).
+ *
+ * A rejected/aborted prompt (Ctrl+C, `ExitPromptError`) is NOT caught
+ * here — it propagates up into `runInit()`'s own `catch`, the same
+ * `isPromptAbort(err)` handling every other prompt rejection in this file
+ * already gets (exit code 130).
+ */
+async function maybePromptToOpen(
+  result: ScaffoldResult,
+  deps: InitCommandDependencies,
+  options: { open?: boolean } | undefined,
+  nonInteractiveAnswers: Answers | undefined
+): Promise<void> {
+  if (options?.open === false || nonInteractiveAnswers !== undefined || !process.stdout.isTTY) {
+    return;
+  }
+
+  const choices = [OPEN_FOLDER, ...(result.mainFile !== undefined ? [OPEN_MAIN_FILE] : []), DONT_OPEN];
+  const question: QuestionDefinition = {
+    id: 'openChoice',
+    message: 'Open the project now?',
+    type: 'select',
+    choices,
+  };
+
+  const answers = await deps.ports.prompter.ask([question]);
+  const choice = answers[question.id];
+
+  if (choice === OPEN_FOLDER) {
+    await deps.opener.open(result.targetDir);
+  } else if (choice === OPEN_MAIN_FILE && result.mainFile !== undefined) {
+    await deps.opener.open(join(result.targetDir, result.mainFile));
   }
 }
 

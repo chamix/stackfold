@@ -41,6 +41,15 @@ export interface ScaffoldResult {
   /** Relative paths, in the order they were written. */
   filesWritten: string[];
   postActionsRun: PostActionDefinition[];
+  /**
+   * Optional (Task 044, UX-001/SK-ADR-004): copied verbatim from
+   * `blueprint.mainFile` when the plugin declared one — never
+   * `mainFile: undefined` otherwise. `cli/commands/init.ts` has no other
+   * way to see this field, since every other `ProjectBlueprint` property
+   * besides `files`/`postActions` is otherwise dropped on the way out of
+   * `runPlugin()`.
+   */
+  mainFile?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +190,12 @@ export async function runPlugin(
 
   await runHooks('postInit', plugin.hooks, ports, answers);
 
-  return { targetDir, filesWritten, postActionsRun };
+  return {
+    targetDir,
+    filesWritten,
+    postActionsRun,
+    ...(blueprint.mainFile !== undefined ? { mainFile: blueprint.mainFile } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

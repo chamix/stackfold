@@ -144,6 +144,16 @@ export interface ScaffoldDefinition {
   steps: ActionStep[];
   /** hook actions only, keyed by lifecycle moment — compiled into `HookHandler[]`. */
   hooks?: Partial<Record<HookName, ActionStep[]>>;
+  /**
+   * Optional (Task 044, UX-001/SK-ADR-004): resolves onto
+   * `ProjectBlueprint.mainFile`. Same literal-or-JSONLogic contract as
+   * `ActionStep.when` above — a plain value is used as-is, a JSONLogic
+   * expression is evaluated against `answers` via the injected
+   * `ExpressionEvaluator`. Absent ⇒ the compiled blueprint has no
+   * `mainFile` key at all (never `mainFile: undefined`) — zero behavior
+   * change for every `ScaffoldDefinition` that predates this field.
+   */
+  mainFile?: unknown;
 }
 
 /**
@@ -201,7 +211,13 @@ export function compileScaffold(definition: ScaffoldDefinition, evaluator: Expre
       // contributes. One fragment, since a single `ScaffoldDefinition`
       // compiles to a single plugin.
       const composed = composeBlueprint([{ id: definition.id, files: contributions }]);
-      return { files: composed.files, postActions: [...composed.postActions, ...postActions] };
+      return {
+        files: composed.files,
+        postActions: [...composed.postActions, ...postActions],
+        ...(definition.mainFile !== undefined
+          ? { mainFile: evaluator.evaluate(definition.mainFile, answers) as string }
+          : {}),
+      };
     },
   };
 }

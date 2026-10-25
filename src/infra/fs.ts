@@ -98,7 +98,7 @@ function isErrnoCode(err: unknown, code: string): boolean {
 
 /**
  * Real `git config --get user.name` read (Task 034 review follow-up,
- * Should-fix #2). Relocated here from `plugins/plugin-builder/index.ts` —
+ * Should-fix #2). Relocated here from `plugins/plugin-builder/scaffold.ts` —
  * a concrete, `node:child_process`-backed adapter belongs in `infra/`,
  * chosen and injected by `cli/index.ts` (the composition root), the same
  * discipline already applied to `NodeFileWriter`/`ExecaProcessRunner`/
@@ -107,7 +107,7 @@ function isErrnoCode(err: unknown, code: string): boolean {
  *
  * Deliberately synchronous: `plugin-builder`'s "author" question needs
  * this value as a plain `QuestionDefinition.default` *before*
- * `ports.prompter.ask()` ever runs (see `plugin-builder/index.ts`'s own
+ * `ports.prompter.ask()` ever runs (see `plugin-builder/scaffold.ts`'s own
  * `PluginBuilderOptions.gitUserName` doc comment for the full reasoning —
  * a `preInit` hook runs too late to retroactively change what default the
  * user was already shown). Throws whenever the probe itself fails (git not

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Post-`init` "open the project" prompt** (Task 044, UX-001): after a
+  successful, interactive `stackfold init`, a new `select` prompt offers
+  "Open folder" / "Open main file" (only when the plugin declares one) /
+  "Don't open". Opens via a 3-platform native command switch
+  (`explorer`/`open`/`xdg-open`, `src/infra/open.ts`'s new `NativeOpener`,
+  via `execa`, never `shell: true`) — never a hardcoded editor. The prompt
+  is skipped entirely in any of 3 cases: `--no-open`, non-interactive
+  `init` (`--config`/`--answer`), or non-TTY stdout.
+- **`ProjectBlueprint.mainFile?: string`** (Task 044, SK-ADR-004):
+  additive field, resolved by each plugin inside its own
+  `buildBlueprint(answers)` — not static plugin metadata, since
+  `web-app-stackfold`'s entry point varies by its `appType` answer.
+  Declarative scaffolds (`ScaffoldDefinition.mainFile`) resolve it via the
+  same literal-or-JSONLogic contract `ActionStep.when` already
+  established. `electron-stackfold` declares the fixed
+  `'src/main/index.ts'`; `web-app-stackfold` resolves it per `appType`
+  (`index.html` / `src/main.tsx` / `src/main.ts`); `plugin-builder`
+  deliberately declares none. `core/orchestrator.ts`'s `ScaffoldResult`
+  carries it through so the CLI layer can see it.
 - **`electron-stackfold` reauthored as a TS `scaffold.ts` + synth** (Task
   043, SK-ADR-003): same mechanical port pattern as `plugin-builder`
   (Task 042), but simpler — none of its 6 questions carry `validate`

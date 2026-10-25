@@ -461,5 +461,6 @@
         }
       }
     ]
-  }
+  },
+  "mainFile": "src/main/index.ts"
 }

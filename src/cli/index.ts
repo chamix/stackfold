@@ -12,6 +12,7 @@ import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
 import { registerScaffoldSynthCommand } from './commands/scaffoldSynth.js';
 import { NodeFileWriter } from '../infra/fs.js';
+import { NativeOpener } from '../infra/open.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
 import { InquirerPrompter } from '../infra/prompter.js';
@@ -72,6 +73,7 @@ registerInitCommand(program, {
     fileWriter: new NodeFileWriter(),
     processRunner: new ExecaProcessRunner(),
   },
+  opener: new NativeOpener(),
   cwd: () => process.cwd(),
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),
