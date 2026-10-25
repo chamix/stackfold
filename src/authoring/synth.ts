@@ -105,14 +105,43 @@ const hookNameSchema = z.enum(['preInit', 'postWrite', 'postInit']);
  * `core/authoring.ts`'s own type remains the single source of truth for
  * the contract itself.
  */
-export const scaffoldDefinitionSchema = z.object({
-  id: z.string().trim().min(1, 'ScaffoldDefinition requires a non-empty "id"'),
-  description: z.string().trim().min(1, 'ScaffoldDefinition requires a non-empty "description"'),
-  help: pluginHelpSchema.optional(),
-  questions: z.array(questionDefinitionSchema),
-  steps: z.array(actionStepSchema),
-  hooks: z.partialRecord(hookNameSchema, z.array(actionStepSchema)).optional(),
-});
+export const scaffoldDefinitionSchema = z
+  .object({
+    id: z.string().trim().min(1, 'ScaffoldDefinition requires a non-empty "id"'),
+    description: z.string().trim().min(1, 'ScaffoldDefinition requires a non-empty "description"'),
+    help: pluginHelpSchema.optional(),
+    questions: z.array(questionDefinitionSchema),
+    steps: z.array(actionStepSchema),
+    hooks: z.partialRecord(hookNameSchema, z.array(actionStepSchema)).optional(),
+  })
+  // D6 (Task 041 amendment, 2026-10-24) — a gap residual to fragments/
+  // namespacing: nothing before this validated that `questions[].id` is
+  // unique across the whole definition, whatever produced the duplicate
+  // (a fragment bug that somehow evades mountFragment()'s namespace
+  // registry, or a hand-written root question colliding with another by
+  // accident, no fragments involved at all). `superRefine()` (rather than
+  // `refine()`) so the specific duplicated id can be named in the issue
+  // message, not folded into a generic one.
+  .superRefine((definition, ctx) => {
+    const duplicateId = findDuplicateQuestionId(definition.questions);
+    if (duplicateId !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['questions'],
+        message: `questions[].id "${duplicateId}" appears more than once`,
+      });
+    }
+  });
+
+/** Returns the first `id` seen twice in `questions`, or `undefined` if every id is unique. */
+function findDuplicateQuestionId(questions: { id: string }[]): string | undefined {
+  const seen = new Set<string>();
+  for (const question of questions) {
+    if (seen.has(question.id)) return question.id;
+    seen.add(question.id);
+  }
+  return undefined;
+}
 
 function formatZodIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');

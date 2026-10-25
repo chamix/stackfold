@@ -55,6 +55,23 @@ describe('scaffoldDefinitionSchema', () => {
     const bad = { ...VALID_DEFINITION, steps: [{ action: 'mkdir' }] };
     expect(scaffoldDefinitionSchema.safeParse(bad).success).toBe(false);
   });
+
+  it('rejects a duplicate questions[].id, with no fragments involved (D6, Task 041 amendment)', () => {
+    const withDuplicateIds = {
+      ...VALID_DEFINITION,
+      questions: [
+        { id: 'appName', message: 'App name', type: 'input' },
+        { id: 'appName', message: 'App name again', type: 'input' },
+      ],
+    };
+
+    const result = scaffoldDefinitionSchema.safeParse(withDuplicateIds);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.message.includes('appName'))).toBe(true);
+    }
+  });
 });
 
 describe('synth', () => {
