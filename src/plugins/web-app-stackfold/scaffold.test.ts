@@ -36,6 +36,20 @@ describe('web-app-stackfold — its own ScaffoldDefinition compiles (SK-ADR-003)
     expect(() => plugin.buildBlueprint(answers)).not.toThrow();
   });
 
+  // Task 044 (UX-001/SK-ADR-004, rollout table): mainFile depends on
+  // appType, resolved inside buildBlueprint() — the case that motivated
+  // SK-ADR-004 in the first place.
+  it.each([
+    ['standalone-html', 'index.html'],
+    ['spa-react', 'src/main.tsx'],
+    ['spa-vue', 'src/main.ts'],
+    ['spa-vanilla', 'src/main.ts'],
+  ] as const)('resolves mainFile for appType=%s to %s', (appType, expectedMainFile) => {
+    const plugin = compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
+    const answers = { appName: 'My Cool App!', description: 'A demo app', author: 'Ada Lovelace', appType };
+    expect(plugin.buildBlueprint(answers).mainFile).toBe(expectedMainFile);
+  });
+
   it('rejects an invalid appName at the validate() boundary (the reason this plugin must compile from scaffold.js, not scaffold.json)', () => {
     const plugin = compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
     const appName = plugin.questions().find((q) => q.id === 'appName');

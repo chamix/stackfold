@@ -692,6 +692,73 @@ describe('compileScaffold — per-step "when" conditionals', () => {
   });
 });
 
+// Task 044 (UX-001/SK-ADR-004): `ScaffoldDefinition.mainFile` compiles onto
+// `ProjectBlueprint.mainFile` via the same literal-or-JSONLogic contract
+// `ActionStep.when` already established.
+describe('compileScaffold — mainFile resolution onto the blueprint', () => {
+  it('omits "mainFile" entirely from the blueprint when the definition does not declare one', () => {
+    const def = definition({ id: 'no-main-file', steps: [step('writeFile', { path: 'a.txt', content: 'A' })] });
+
+    const blueprint = compileScaffold(def, new FakeEvaluator()).buildBlueprint({});
+
+    expect('mainFile' in blueprint).toBe(false);
+  });
+
+  // A bare string isn't a `{ var/const }`-shaped expression `FakeEvaluator`
+  // understands (same reason the "literal boolean 'when'" describe block
+  // below uses the real adapter, not the fake) — the real
+  // `JsonLogicExpressionEvaluator` passes a non-rule literal through
+  // unchanged, which is exactly the "a literal, not only a JSONLogic rule"
+  // contract this field shares with `ActionStep.when`.
+  it('resolves a literal "mainFile" value as-is, via the real evaluator', () => {
+    const def = definition({ id: 'literal-main-file', mainFile: 'src/main/index.ts' });
+
+    const blueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({});
+
+    expect(blueprint.mainFile).toBe('src/main/index.ts');
+  });
+
+  it('resolves a JSONLogic-expression-shaped "mainFile" against answers via the injected evaluator', () => {
+    const def = definition({ id: 'expr-main-file', mainFile: { var: 'entryPoint' } });
+    const evaluator = new FakeEvaluator();
+
+    const blueprint = compileScaffold(def, evaluator).buildBlueprint({ entryPoint: 'src/main.ts' });
+
+    expect(blueprint.mainFile).toBe('src/main.ts');
+    expect(evaluator.calls).toContainEqual({ expr: { var: 'entryPoint' }, context: { entryPoint: 'src/main.ts' } });
+  });
+
+  it('resolves a real JSONLogic "if" conditional (web-app-stackfold\'s own appType-branching shape)', () => {
+    const def = definition({
+      id: 'real-jsonlogic-main-file',
+      mainFile: {
+        if: [
+          { '==': [{ var: 'appType' }, 'standalone-html'] },
+          'index.html',
+          { '==': [{ var: 'appType' }, 'spa-react'] },
+          'src/main.tsx',
+          'src/main.ts',
+        ],
+      },
+    });
+
+    const htmlBlueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({
+      appType: 'standalone-html',
+    });
+    expect(htmlBlueprint.mainFile).toBe('index.html');
+
+    const reactBlueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({
+      appType: 'spa-react',
+    });
+    expect(reactBlueprint.mainFile).toBe('src/main.tsx');
+
+    const vanillaBlueprint = compileScaffold(def, new JsonLogicExpressionEvaluator()).buildBlueprint({
+      appType: 'spa-vanilla',
+    });
+    expect(vanillaBlueprint.mainFile).toBe('src/main.ts');
+  });
+});
+
 describe('compileScaffold — misuse guards', () => {
   it('throws when steps[] references an unknown action', () => {
     const def = definition({ id: 'unknown-step', steps: [step('does-not-exist', {})] });

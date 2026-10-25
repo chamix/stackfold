@@ -61,6 +61,33 @@ describe('defineScaffold', () => {
 
     expect(definition.hooks).toEqual({ postInit: [{ action: 'patchFile', params: {} }] });
   });
+
+  // Task 044 (UX-001/SK-ADR-004): `mainFile` passthrough — same
+  // present-only-when-supplied contract as `help`/`hooks` above.
+  it('omits "mainFile" entirely when not supplied', () => {
+    const definition = defineScaffold({ id: 'p', description: 'd', questions: [], steps: [] });
+
+    expect('mainFile' in definition).toBe(false);
+  });
+
+  it('includes a literal "mainFile" when supplied', () => {
+    const definition = defineScaffold({
+      id: 'p',
+      description: 'd',
+      questions: [],
+      steps: [],
+      mainFile: 'src/main/index.ts',
+    });
+
+    expect(definition.mainFile).toBe('src/main/index.ts');
+  });
+
+  it('includes a JSONLogic-expression-shaped "mainFile" when supplied, untouched', () => {
+    const expr = { if: [{ '==': [{ var: 'appType' }, 'standalone-html'] }, 'index.html', 'src/main.ts'] };
+    const definition = defineScaffold({ id: 'p', description: 'd', questions: [], steps: [], mainFile: expr });
+
+    expect(definition.mainFile).toEqual(expr);
+  });
 });
 
 describe('file()', () => {

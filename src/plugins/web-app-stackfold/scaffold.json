@@ -102,12 +102,9 @@
             ]
           },
           {
-            "!==": [
-              {
-                "var": "author"
-              },
-              ""
-            ]
+            "!!": {
+              "var": "author"
+            }
           }
         ]
       }
@@ -572,6 +569,29 @@
           "transform": "current-year"
         }
       }
+    ]
+  },
+  "mainFile": {
+    "if": [
+      {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "standalone-html"
+        ]
+      },
+      "index.html",
+      {
+        "==": [
+          {
+            "var": "appType"
+          },
+          "spa-react"
+        ]
+      },
+      "src/main.tsx",
+      "src/main.ts"
     ]
   }
 }

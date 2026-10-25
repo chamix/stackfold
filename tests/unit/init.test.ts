@@ -7,6 +7,7 @@ import { registerInitCommand, runInit, type InitCommandDependencies } from '../.
 import { formatPostAction } from '../../src/core/orchestrator.js';
 import { TargetNotEmptyError, type PluginRegistry } from '../../src/core/ports.js';
 import type { Answers, PostActionDefinition, ProjectBlueprint, QuestionDefinition, StackfoldPlugin } from '../../src/core/types.js';
+import type { ProjectOpener } from '../../src/infra/open.js';
 
 const CWD = resolve('/base/dir');
 
@@ -47,7 +48,7 @@ function setup(opts: {
   /** Captures the Answers object the "fake" plugin's buildBlueprint() actually received. */
   onBuildBlueprint?: (answers: Answers) => void;
   /** Overrides the default fake ask() implementation (default returns {}). */
-  ask?: () => Promise<Answers>;
+  ask?: (questions: QuestionDefinition[]) => Promise<Answers>;
 } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -56,6 +57,15 @@ function setup(opts: {
   const writes: string[] = [];
   const runs: string[] = [];
   const askCalls: number[] = [];
+  /** Task 044 (UX-001): every `questions` array ever handed to `ask()`, in call order. */
+  const askedQuestions: QuestionDefinition[][] = [];
+  /** Task 044 (UX-001): every path `opener.open()` was called with, in call order. */
+  const openCalls: string[] = [];
+  const opener: ProjectOpener = {
+    open: async (absolutePath) => {
+      openCalls.push(absolutePath);
+    },
+  };
 
   const plugins = [
     fakePlugin('fake', opts.blueprint ?? DEFAULT_BLUEPRINT, { questions: opts.questions, onBuildBlueprint: opts.onBuildBlueprint }),
@@ -68,12 +78,14 @@ function setup(opts: {
 
   const deps: InitCommandDependencies = {
     registry,
+    opener,
     ports: {
       prompter: {
-        ask: async () => {
+        ask: async (questions) => {
           askCalls.push(1);
+          askedQuestions.push(questions);
           if (opts.askError) throw opts.askError;
-          if (opts.ask) return opts.ask();
+          if (opts.ask) return opts.ask(questions);
           return {};
         },
       },
@@ -105,7 +117,7 @@ function setup(opts: {
     stderr: (line) => stderr.push(line),
   };
 
-  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs, askCalls };
+  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs, askCalls, askedQuestions, openCalls };
 }
 
 /** Lines following `title` in the output, up to the next non-indented line. */
@@ -398,5 +410,146 @@ describe('runInit — non-interactive answers via --config / --answer (testing f
 
     expect(s.askCalls).toEqual([1]);
     expect(received).toEqual({ appName: 'From Interactive Prompt', includeSettings: true });
+  });
+});
+
+// Task 044 (UX-001 RF-1/RF-4): post-init "open the project" prompt. The
+// three-way skip (--no-open / non-interactive / non-TTY) and the prompt's
+// own choice set/action are exercised against the real `runInit()`, the
+// same fake-ports harness every other describe block above already uses —
+// just with its new `opener` fake and a controllable `process.stdout.isTTY`.
+describe('runInit — post-init "open the project" prompt (UX-001, Task 044)', () => {
+  let originalIsTTY: boolean | undefined;
+
+  beforeEach(() => {
+    originalIsTTY = process.stdout.isTTY;
+    process.stdout.isTTY = true;
+  });
+
+  afterEach(() => {
+    process.stdout.isTTY = originalIsTTY;
+  });
+
+  // The init-flow's own "ask" (for the plugin's declared questions) always
+  // returns {} by default in this harness — the open-prompt is the only
+  // question ever actually asked for the "fake" plugin's own empty
+  // `questions()`, so asserting on `s.askedQuestions` unambiguously
+  // identifies the open-prompt's own choice set.
+  function openPromptQuestion(s: ReturnType<typeof setup>) {
+    const q = s.askedQuestions.at(-1)?.[0];
+    if (!q) throw new Error('expected the open-prompt question to have been asked');
+    return q;
+  }
+
+  it('offers "Open folder"/"Open main file"/"Don\'t open" when the blueprint declares a mainFile', async () => {
+    const s = setup({ blueprint: { ...DEFAULT_BLUEPRINT, mainFile: 'src/main.ts' } });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(0);
+
+    const question = openPromptQuestion(s);
+    expect(question.type).toBe('select');
+    expect(question.choices).toEqual(['Open folder', 'Open main file', "Don't open"]);
+  });
+
+  it('offers only "Open folder"/"Don\'t open" when the blueprint declares no mainFile', async () => {
+    const s = setup(); // DEFAULT_BLUEPRINT has no mainFile
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(0);
+
+    const question = openPromptQuestion(s);
+    expect(question.choices).toEqual(['Open folder', "Don't open"]);
+  });
+
+  it('"Open folder" calls opener.open() with the resolved targetDir', async () => {
+    const s = setup({ ask: async () => ({ openChoice: 'Open folder' }) });
+
+    await runInit('fake', 'my-app', s.deps);
+
+    expect(s.openCalls).toEqual([resolve(CWD, 'my-app')]);
+  });
+
+  it('"Open main file" calls opener.open() with targetDir joined with the blueprint\'s mainFile', async () => {
+    const s = setup({
+      blueprint: { ...DEFAULT_BLUEPRINT, mainFile: 'src/main.ts' },
+      ask: async () => ({ openChoice: 'Open main file' }),
+    });
+
+    await runInit('fake', 'my-app', s.deps);
+
+    expect(s.openCalls).toEqual([join(resolve(CWD, 'my-app'), 'src/main.ts')]);
+  });
+
+  it('"Don\'t open" calls opener.open() zero times', async () => {
+    const s = setup({ ask: async () => ({ openChoice: "Don't open" }) });
+
+    await runInit('fake', 'my-app', s.deps);
+
+    expect(s.openCalls).toEqual([]);
+  });
+
+  it('--no-open skips the prompt entirely — opener.open() is never called, and no extra ask() happens', async () => {
+    const s = setup();
+
+    expect(await runInit('fake', 'my-app', s.deps, { open: false })).toBe(0);
+
+    expect(s.askCalls).toEqual([1]); // only the plugin's own (empty) questions() call
+    expect(s.openCalls).toEqual([]);
+  });
+
+  // Commander's negated-flag convention (--force/--config/--answer's own
+  // sibling options above --no-open in registerInitCommand): confirms
+  // `--no-open` on the real CLI command actually produces `options.open
+  // === false` all the way through to `maybePromptToOpen()`'s skip check —
+  // not just that `runInit({ open: false })` behaves correctly when called
+  // directly (every other test in this describe block).
+  it('--no-open via the real registerInitCommand/Commander parse also skips the prompt', async () => {
+    const s = setup();
+    const program = new Command();
+    program.exitOverride();
+    registerInitCommand(program, s.deps);
+    process.exitCode = undefined;
+
+    await program.parseAsync(['init', 'fake', 'my-app', '--no-open'], { from: 'user' });
+
+    expect(process.exitCode).toBe(0);
+    expect(s.openCalls).toEqual([]);
+    expect(s.askCalls).toEqual([1]); // only the plugin's own (empty) questions() call
+
+    process.exitCode = undefined;
+  });
+
+  it('non-interactive mode (--answer given) skips the prompt entirely', async () => {
+    const s = setup({ questions: [{ id: 'appName', message: 'App name?', type: 'input' }] });
+
+    expect(await runInit('fake', 'my-app', s.deps, { answer: ['appName=Demo'] })).toBe(0);
+
+    expect(s.askCalls).toEqual([]); // StaticPrompter never calls ask() at all
+    expect(s.openCalls).toEqual([]);
+  });
+
+  it('non-TTY stdout skips the prompt entirely, even though neither --no-open nor non-interactive answers were given', async () => {
+    process.stdout.isTTY = false;
+    const s = setup();
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(0);
+
+    expect(s.askCalls).toEqual([1]); // only the plugin's own (empty) questions() call
+    expect(s.openCalls).toEqual([]);
+  });
+
+  it('a Ctrl+C (ExitPromptError) in the open-prompt propagates into the existing abort handling: exit 130', async () => {
+    const abort = new Error('User force closed the prompt with SIGINT');
+    abort.name = 'ExitPromptError';
+    let askCount = 0;
+    const s = setup({
+      ask: async () => {
+        askCount += 1;
+        if (askCount === 1) return {}; // the plugin's own (empty) questions() call
+        throw abort; // the open-prompt's own call
+      },
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(130);
+    expect(s.openCalls).toEqual([]);
   });
 });

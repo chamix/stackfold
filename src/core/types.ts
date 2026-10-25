@@ -48,6 +48,15 @@ export type PostActionDefinition =
 export interface ProjectBlueprint {
   files: FileEntry[];
   postActions: PostActionDefinition[];
+  /**
+   * Optional (UX-001/SK-ADR-004): the project's "main" file, relative to
+   * targetDir, if this plugin+answers combination has an obvious one.
+   * Resolved from `answers` here, not declared as static plugin
+   * metadata — some plugins (`web-app-stackfold`) have an entry point
+   * that varies by answer (e.g. `appType`), which static metadata
+   * cannot express.
+   */
+  mainFile?: string;
 }
 
 /**

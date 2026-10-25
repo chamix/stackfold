@@ -158,6 +158,11 @@ export default defineScaffold({
     },
   ],
 
+  // Task 044 (UX-001/SK-ADR-004, rollout table): fixed entry point,
+  // independent of answers — a plain literal, same contract as a literal
+  // boolean `when` already uses elsewhere in this file.
+  mainFile: 'src/main/index.ts',
+
   steps: [
     file('package.json', PACKAGE_JSON_TEMPLATE, { jsonEscapeKeys: ['appName', 'description', 'author'] }),
     file('README.md', README_TEMPLATE),

@@ -27,4 +27,17 @@ describe('electron-stackfold — its own ScaffoldDefinition compiles (SK-ADR-003
     );
     expect(() => plugin.buildBlueprint(defaults)).not.toThrow();
   });
+
+  // Task 044 (UX-001/SK-ADR-004, rollout table): electron-stackfold's entry
+  // point is fixed, independent of answers — a plain literal, same pattern
+  // as a literal boolean `when` today.
+  it('declares mainFile as the fixed src/main/index.ts entry point', async () => {
+    const resolved =
+      typeof definition === 'function' ? await (definition as () => unknown | Promise<unknown>)() : definition;
+    const plugin = compileScaffold(resolved as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
+    const defaults = Object.fromEntries(
+      plugin.questions().map((q) => [q.id, q.default ?? (q.type === 'confirm' ? false : '')])
+    );
+    expect(plugin.buildBlueprint(defaults).mainFile).toBe('src/main/index.ts');
+  });
 });

@@ -41,6 +41,8 @@ export interface DefineScaffoldInput {
   questions: QuestionDefinition[];
   steps: ActionStep[];
   hooks?: Partial<Record<HookName, ActionStep[]>>;
+  /** Task 044 (UX-001/SK-ADR-004) — field-for-field `ScaffoldDefinition.mainFile`. */
+  mainFile?: unknown;
 }
 
 /**
@@ -61,6 +63,7 @@ export function defineScaffold(input: DefineScaffoldInput): ScaffoldDefinition {
     questions: input.questions,
     steps: input.steps,
     ...(input.hooks ? { hooks: input.hooks } : {}),
+    ...(input.mainFile !== undefined ? { mainFile: input.mainFile } : {}),
   };
 }
 

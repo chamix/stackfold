@@ -236,6 +236,31 @@ describe('runPlugin — Template Method sequence', () => {
       postActionsRun: [{ kind: 'git-init' }],
     });
   });
+
+  // Task 044 (UX-001/SK-ADR-004): `ProjectBlueprint.mainFile` is additive —
+  // when the plugin's `buildBlueprint()` declares it, `ScaffoldResult`
+  // carries it through unchanged; cli/commands/init.ts has no other way to
+  // see it, since `runPlugin()`'s return value otherwise drops everything
+  // except files/postActions.
+  it('carries blueprint.mainFile through onto the returned ScaffoldResult when the plugin declares one', async () => {
+    const h = harness({
+      blueprint: {
+        files: [{ path: 'src/main.ts', content: 'export {};' }],
+        postActions: [],
+        mainFile: 'src/main.ts',
+      },
+    });
+
+    const result = await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(result.mainFile).toBe('src/main.ts');
+  });
+
+  it('omits mainFile entirely from the returned ScaffoldResult when the plugin does not declare one', async () => {
+    const h = harness();
+    const result = await runPlugin(h.plugin, TARGET, h.ports);
+    expect('mainFile' in result).toBe(false);
+  });
 });
 
 describe('runPlugin — §3.1 no partial answers reach transformation', () => {
