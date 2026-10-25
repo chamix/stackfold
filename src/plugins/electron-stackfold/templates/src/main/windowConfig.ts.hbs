@@ -1,0 +1,41 @@
+import type { BrowserWindowConstructorOptions } from 'electron';
+
+/**
+ * The non-negotiable security posture for every window.
+ * Every key here is explicit even where it matches an Electron default —
+ * an explicit value survives a future default change.
+ */
+export function secureWebPreferences(
+  preloadPath: string
+): BrowserWindowConstructorOptions['webPreferences'] {
+  return {
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    preload: preloadPath,
+  };
+}
+{{#if includeAboutHelp}}
+
+/**
+ * Options for a static, non-interactive window (About/Help): the same
+ * isolation posture as `secureWebPreferences()`, with no `preload` key —
+ * these windows have no bridge, so there is nothing to isolate a preload
+ * script for (the narrow-bridge invariant, satisfied by zero bridge).
+ */
+export function staticWindowOptions(): BrowserWindowConstructorOptions {
+  return {
+    width: 640,
+    height: 480,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  };
+}
+{{/if}}

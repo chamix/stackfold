@@ -1,0 +1,70 @@
+import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { app } from 'electron';
+import { atomicWriteFile } from './atomicWriteFile.js';
+import { registerHandler, isTrustedSender } from './ipc.js';
+import { ViewSettingsSchema, DEFAULT_VIEW_SETTINGS, type ViewSettings } from './settings.js';
+
+export const SETTINGS_CHANNELS = {
+  get: '{{packageName}}:settings:get',
+  set: '{{packageName}}:settings:set',
+  changed: '{{packageName}}:settings:changed',
+} as const;
+
+const SETTINGS_PATH = (): string => join(app.getPath('userData'), 'settings.json');
+
+let current: ViewSettings = DEFAULT_VIEW_SETTINGS;
+const listeners = new Set<(settings: ViewSettings) => void>();
+
+async function readAndValidate(): Promise<ViewSettings | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(SETTINGS_PATH(), 'utf8');
+  } catch {
+    return undefined; // missing file -> caller keeps in-memory defaults, writes nothing
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return undefined; // corrupt (invalid JSON) -> self-heal, no backup
+  }
+  const parsed = ViewSettingsSchema.safeParse(json);
+  return parsed.success ? parsed.data : undefined; // corrupt (wrong shape) -> self-heal, no backup
+}
+
+export async function loadSettingsAtStartup(): Promise<void> {
+  current = (await readAndValidate()) ?? DEFAULT_VIEW_SETTINGS;
+}
+
+/** Re-reads on window focus; a failed read never touches `current`. */
+export async function rereadSettingsOnFocus(): Promise<void> {
+  const next = await readAndValidate();
+  if (next !== undefined) {
+    current = next;
+    listeners.forEach((listener) => listener(current));
+  }
+}
+
+export function getSettings(): ViewSettings {
+  return current;
+}
+
+export async function setSettings(patch: Partial<ViewSettings>): Promise<ViewSettings> {
+  current = ViewSettingsSchema.parse({ ...current, ...patch });
+  await atomicWriteFile(SETTINGS_PATH(), `${JSON.stringify(current, null, 2)}\n`);
+  listeners.forEach((listener) => listener(current));
+  return current;
+}
+
+export function onSettingsChange(listener: (settings: ViewSettings) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function registerSettingsIpcHandlers(): void {
+  registerHandler(SETTINGS_CHANNELS.get, isTrustedSender, () => getSettings());
+  registerHandler(SETTINGS_CHANNELS.set, isTrustedSender, (_event, patch) =>
+    setSettings(patch as Partial<ViewSettings>)
+  );
+}

@@ -1,0 +1,13 @@
+import { z } from 'zod';
+
+export const ViewSettingsSchema = z
+  .object({
+    darkMode: z.boolean(),
+  })
+  .strict();
+
+export type ViewSettings = z.infer<typeof ViewSettingsSchema>;
+
+export const DEFAULT_VIEW_SETTINGS: ViewSettings = {
+  darkMode: false,
+};

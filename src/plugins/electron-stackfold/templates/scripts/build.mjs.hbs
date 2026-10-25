@@ -1,0 +1,31 @@
+#!/usr/bin/env node
+import { execSync } from 'node:child_process';
+import { cpSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { build as esbuildBuild } from 'esbuild';
+
+{{#if includeSettings}}execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });
+
+execSync('tsc -p tsconfig.renderer.json', { stdio: 'inherit' });{{else}}{{#if includeSkins}}execSync('tsc -p tsconfig.main.json', { stdio: 'inherit' });
+
+execSync('tsc -p tsconfig.renderer.json', { stdio: 'inherit' });{{else}}execSync('tsc -p tsconfig.json', { stdio: 'inherit' });{{/if}}{{/if}}
+
+await esbuildBuild({
+  entryPoints: ['src/preload/index.ts'],
+  outfile: 'dist/preload/index.js',
+  bundle: true,
+  platform: 'node',
+  format: 'cjs', // required: sandbox: true loads the preload as CJS
+  external: ['electron'],
+});
+
+// Explicit asset manifest (handoff debt item #1) — add an entry here,
+// never a bare `cp -r` in package.json, when renderer assets grow.
+const ASSETS = [
+  ['src/renderer/index.html', 'dist/renderer/index.html'],
+  ['src/renderer/app.css', 'dist/renderer/app.css'],
+];
+for (const [from, to] of ASSETS) {
+  mkdirSync(dirname(to), { recursive: true });
+  cpSync(from, to);
+}

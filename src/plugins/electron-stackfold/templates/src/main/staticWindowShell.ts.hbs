@@ -1,0 +1,32 @@
+import { createHash } from 'node:crypto';
+
+/** Escapes free text for safe placement inside an HTML text node. */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\'/g, '&#39;');
+}
+
+/**
+ * Builds the <meta http-equiv="Content-Security-Policy"> tag for a
+ * static, non-interactive window (About/Help) — delivered via a <meta>
+ * tag, never an HTTP header, since there is no HTTP response for a
+ * `data:` URL to attach one to (electron/security.md's "Static-window
+ * CSP" section). The style-src hash is derived from the exact inline
+ * <style> CSS passed in, so the policy can never drift from the content
+ * it actually guards.
+ */
+export function buildStaticWindowCsp(inlineStyleCss: string): string {
+  const hash = createHash('sha256').update(inlineStyleCss, 'utf8').digest('base64');
+  const policy = [
+    "default-src 'none'",
+    `style-src 'sha256-${hash}'`,
+    "script-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ');
+  return `<meta http-equiv="Content-Security-Policy" content="${policy}" />`;
+}

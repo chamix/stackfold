@@ -1,0 +1,71 @@
+import { Menu, shell, type MenuItemConstructorOptions } from 'electron';
+{{#if includeSettings}}import { getSettings, setSettings } from './settingsStore.js';
+{{/if}}{{#if includeSkins}}import { getActiveSkinName, getSkins, setActiveSkinName, SKINS_PATH } from './skinsStore.js';
+{{/if}}{{#if includeAboutHelp}}import { openAboutWindow } from './aboutWindow.js';
+import { openHelpWindow } from './helpWindow.js';
+{{/if}}
+
+{{#if includeSkins}}// Active skin selection is in-memory-only and resets on relaunch (see skinsStore.ts).
+function buildSkinSubmenu(): MenuItemConstructorOptions[] {
+  const activeSkinName = getActiveSkinName();
+  return getSkins().skins.map((skin) => ({
+    label: skin.name,
+    type: 'checkbox' as const,
+    checked: skin.name === activeSkinName,
+    click: () => setActiveSkinName(skin.name),
+  }));
+}
+
+{{/if}}export function buildMenuTemplate(): MenuItemConstructorOptions[] {
+  const fileItems: MenuItemConstructorOptions[] = [{ label: 'Exit', role: 'quit' }];
+
+{{#if includeSettings}}  const viewItems: MenuItemConstructorOptions[] = [];
+  viewItems.push(
+    {
+      label: 'Dark Mode',
+      type: 'checkbox',
+      checked: getSettings().darkMode,
+      click: () => {
+        void setSettings({ darkMode: !getSettings().darkMode });
+      },
+    }
+  );
+{{#if includeSkins}}  viewItems.push(
+    { label: 'Skin', submenu: buildSkinSubmenu() },
+    {
+      label: 'Edit Skins…',
+      click: () => {
+        void shell.openPath(SKINS_PATH());
+      },
+    }
+  );
+{{/if}}
+
+{{else}}{{#if includeSkins}}  const viewItems: MenuItemConstructorOptions[] = [];
+  viewItems.push(
+    { label: 'Skin', submenu: buildSkinSubmenu() },
+    {
+      label: 'Edit Skins…',
+      click: () => {
+        void shell.openPath(SKINS_PATH());
+      },
+    }
+  );
+
+{{/if}}{{/if}}{{#if includeAboutHelp}}  const helpItems: MenuItemConstructorOptions[] = [
+    { label: 'Help', click: () => openHelpWindow() },
+    { label: 'About', click: () => openAboutWindow() },
+  ];
+
+{{/if}}  const template: MenuItemConstructorOptions[] = [{ label: 'File', submenu: fileItems }];
+{{#if includeSettings}}  if (viewItems.length > 0) {
+    template.push({ label: 'View', submenu: viewItems });
+  }
+{{else}}{{#if includeSkins}}  if (viewItems.length > 0) {
+    template.push({ label: 'View', submenu: viewItems });
+  }
+{{/if}}{{/if}}{{#if includeAboutHelp}}  if (helpItems.length > 0) {
+    template.push({ label: 'Help', submenu: helpItems });
+  }
+{{/if}}  return template;
+}

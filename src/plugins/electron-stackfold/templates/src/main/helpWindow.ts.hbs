@@ -1,0 +1,58 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { app, BrowserWindow } from 'electron';
+import { staticWindowOptions } from './windowConfig.js';
+import { buildStaticWindowCsp, escapeHtml } from './staticWindowShell.js';
+
+const STYLE_CSS = [
+  'body { font-family: system-ui, sans-serif; margin: 2rem; }',
+  'pre { white-space: pre-wrap; font-family: inherit; }',
+].join('\n');
+
+function readHelpText(): string {
+  try {
+    return readFileSync(join(app.getAppPath(), 'help.md'), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function buildHelpHtml(): string {
+  const text = escapeHtml(readHelpText());
+  return [
+    '<!doctype html>',
+    '<html>',
+    '<head>',
+    '<meta charset="utf-8" />',
+    buildStaticWindowCsp(STYLE_CSS),
+    '<title>Help</title>',
+    `<style>${STYLE_CSS}</style>`,
+    '</head>',
+    '<body>',
+    `<pre>${text}</pre>`,
+    '</body>',
+    '</html>',
+  ].join('\n');
+}
+
+let helpWindow: BrowserWindow | undefined;
+
+export function openHelpWindow(): void {
+  if (helpWindow) {
+    helpWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow(staticWindowOptions());
+  window.setMenu(null);
+  helpWindow = window;
+  window.on('closed', () => {
+    helpWindow = undefined;
+  });
+  window.loadURL(`data:text/html,${encodeURIComponent(buildHelpHtml())}`).catch((error: unknown) => {
+    console.error('Failed to load Help window', error);
+  });
+}
+
+export function closeHelpWindow(): void {
+  helpWindow?.close();
+}

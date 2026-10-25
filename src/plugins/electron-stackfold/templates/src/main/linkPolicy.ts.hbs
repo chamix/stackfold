@@ -1,0 +1,15 @@
+/**
+ * True for any http(s) URL that isn't same-origin with `appOrigin`.
+ * Parses with URL; never compares raw strings (prefix checks are
+ * trivially bypassed, e.g. `https://app.example.evil.test`).
+ */
+export function isExternalHttpUrl(url: string, appOrigin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false; // unparsable is not "external http" — caller's default wins
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  return parsed.origin !== appOrigin;
+}

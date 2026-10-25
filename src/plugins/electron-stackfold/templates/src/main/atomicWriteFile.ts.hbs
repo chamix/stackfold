@@ -1,0 +1,13 @@
+import { randomBytes } from 'node:crypto';
+import { rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
+/**
+ * Atomically replaces `targetPath`'s content: writes to a sibling temp
+ * file, then renames it over the target.
+ */
+export async function atomicWriteFile(targetPath: string, content: string): Promise<void> {
+  const tempPath = join(dirname(targetPath), `.${randomBytes(6).toString('hex')}.tmp`);
+  await writeFile(tempPath, content, 'utf8');
+  await rename(tempPath, targetPath);
+}

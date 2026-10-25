@@ -1,0 +1,13 @@
+appId: "com.{{packageName}}.app"
+productName: "{{appName}}"
+directories:
+  output: release
+files:
+  - dist/**
+{{#if includeAboutHelp}}  - third-party-notices.json
+  - help.md
+{{/if}}win:
+  target:
+    - nsis
+    - portable
+publish: null

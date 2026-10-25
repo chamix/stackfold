@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest';
+import { pollUntilStable } from '../e2e/support/pollUntilStable.js';
+
+describe('pollUntilStable', () => {
+  it('resolves once the same value is read stableCount times in a row', async () => {
+    let i = 0;
+    const read = () => {
+      i += 1;
+      return i < 3 ? i : 3; // settles at 3 from the 3rd read onward
+    };
+    const result = await pollUntilStable(read, { intervalMs: 1, stableCount: 3, timeoutMs: 1000 });
+    expect(result).toBe(3);
+  });
+
+  it('throws once timeoutMs elapses without a stable value', async () => {
+    let i = 0;
+    await expect(
+      pollUntilStable(
+        () => {
+          i += 1;
+          return i;
+        },
+        { intervalMs: 1, stableCount: 2, timeoutMs: 20 }
+      )
+    ).rejects.toThrow(/timed out/);
+  });
+
+  it('rejects a stableCount below 1', async () => {
+    await expect(pollUntilStable(() => 1, { stableCount: 0 })).rejects.toThrow(/stableCount/);
+  });
+
+  it('supports an async read()', async () => {
+    const result = await pollUntilStable(async () => 'done', { stableCount: 2, intervalMs: 1, timeoutMs: 500 });
+    expect(result).toBe('done');
+  });
+});
