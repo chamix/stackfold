@@ -238,6 +238,157 @@ describe('mountFragment — Handlebars rewrite engine (D5, ported spike battery)
   });
 });
 
+// ---------------------------------------------------------------------------
+// Backlog items 3-4 (review Task 041, 2026-10-24; fixed Task 047,
+// 2026-10-27): two literalKeys-holding actions carry local-id references
+// that the rewrite engine above never touched — `writeFile`'s
+// `jsonEscapeKeys`-family fields (array of local ids) and `deriveAnswer`'s
+// `from`/`to` (single local-id strings). Neither bug is exercised by any
+// real plugin today (confirmed: no shipped fragment combines
+// `mountFragment()` with either), so every case here is a from-scratch
+// regression battery, not a port of an existing spike.
+// ---------------------------------------------------------------------------
+
+describe('mountFragment — id-bearing literalKeys rewrite (Task 047)', () => {
+  it.each(['jsonEscapeKeys', 'jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'] as const)(
+    'rewrites a local id inside writeFile\'s "%s" to its namespaced form',
+    (escapeKeyField) => {
+      const fragment = (): Fragment => ({
+        questions: [q('author')],
+        steps: [
+          {
+            action: 'writeFile',
+            params: { path: 'OUT', content: '{{author}}', [escapeKeyField]: ['author'] },
+          },
+        ],
+      });
+
+      const mounted = mountFragment(fragment, {}, { namespace: 'license' });
+      const step = mounted.steps[0] as ActionStep;
+      const params = step.params as Record<string, unknown>;
+
+      expect(params[escapeKeyField]).toEqual(['license__author']);
+    }
+  );
+
+  it('leaves an id absent from idMap inside jsonEscapeKeys untouched — same "unknown id passes through" convention as the Handlebars/JSONLogic engines', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('author')],
+      steps: [
+        {
+          action: 'writeFile',
+          // 'rootAnswer' is not one of this fragment's own questions — a
+          // real case: a scaffold-root answer, shared unqualified across
+          // every mount, same as `WHEN_AUTHOR_PROVIDED`-style JSONLogic
+          // already supports for `when`.
+          params: { path: 'OUT', content: '{{author}}', jsonEscapeKeys: ['author', 'rootAnswer'] },
+        },
+      ],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'license' });
+    const step = mounted.steps[0] as ActionStep;
+    const params = step.params as Record<string, unknown>;
+
+    expect(params['jsonEscapeKeys']).toEqual(['license__author', 'rootAnswer']);
+  });
+
+  it('rewrites deriveAnswer\'s "from" to the namespaced form of a declared question id', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('appName')],
+      steps: [{ action: 'deriveAnswer', params: { from: 'appName', to: 'packageName', transform: 'npm-slug' } }],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const step = mounted.steps[0] as ActionStep;
+    const params = step.params as Record<string, unknown>;
+
+    expect(params['from']).toBe('ns__appName');
+  });
+
+  it('namespaces deriveAnswer\'s "to" exactly like a declared question id, even though it is never one', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('appName')],
+      steps: [{ action: 'deriveAnswer', params: { from: 'appName', to: 'packageName', transform: 'npm-slug' } }],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const step = mounted.steps[0] as ActionStep;
+    const params = step.params as Record<string, unknown>;
+
+    expect(params['to']).toBe('ns__packageName');
+  });
+
+  it('a later step\'s "from" sees the same namespaced id a deriveAnswer step\'s "to" introduced — cross-step consistency', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('appName')],
+      steps: [
+        { action: 'deriveAnswer', params: { from: 'appName', to: 'packageName', transform: 'npm-slug' } },
+        {
+          action: 'deriveAnswer',
+          params: { from: 'packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix', suffix: 'Api' },
+        },
+      ],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const second = mounted.steps[1]!.params as Record<string, unknown>;
+
+    expect(second['from']).toBe('ns__packageName');
+    expect(second['to']).toBe('ns__bridgeGlobal');
+  });
+
+  it('a from in hooks.preInit sees the same namespaced id a "to" introduced by a step in hooks.postInit — pass-ordering does not matter (Task 047 design: collect-then-rewrite, not a single ordered walk)', () => {
+    const fragment = (): Fragment => ({
+      questions: [],
+      hooks: {
+        preInit: [
+          { action: 'deriveAnswer', params: { from: 'packageName', to: 'year', transform: 'current-year' } },
+        ],
+        postInit: [
+          { action: 'deriveAnswer', params: { from: 'appName', to: 'packageName', transform: 'npm-slug' } },
+        ],
+      },
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const preInitStep = mounted.hooks!.preInit![0]!.params as Record<string, unknown>;
+
+    expect(preInitStep['from']).toBe('ns__packageName');
+  });
+
+  it('does NOT rewrite deriveAnswer\'s "transform" or "suffix" — only "from"/"to" are id-bearing', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('packageName')],
+      steps: [
+        {
+          action: 'deriveAnswer',
+          params: { from: 'packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix', suffix: 'Api' },
+        },
+      ],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const params = mounted.steps[0]!.params as Record<string, unknown>;
+
+    expect(params['transform']).toBe('js-identifier-suffix');
+    expect(params['suffix']).toBe('Api');
+  });
+
+  it('does NOT rewrite patchFile\'s "anchor"/"path" — the id-bearing treatment is opt-in per action+field, not blanket over every literalKey', () => {
+    const fragment = (): Fragment => ({
+      questions: [q('anchor')],
+      steps: [{ action: 'patchFile', params: { path: 'anchor', anchor: 'anchor', insert: 'x', position: 'after' } }],
+    });
+
+    const mounted = mountFragment(fragment, {}, { namespace: 'ns' });
+    const params = mounted.steps[0]!.params as Record<string, unknown>;
+
+    expect(params['path']).toBe('anchor');
+    expect(params['anchor']).toBe('anchor');
+  });
+});
+
 describe('mountFragment — JSONLogic rewrite engine (D5, ported spike battery)', () => {
   /** Mounts a fragment whose single step gates on `when`, returning the rewritten `when`. */
   function mountedWhen(when: unknown, localIds: string[], namespace = 'license'): unknown {

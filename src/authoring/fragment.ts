@@ -131,16 +131,95 @@ function rewriteJsonLogicIds(expr: unknown, idMap: ReadonlyMap<string, string>):
   return expr;
 }
 
+// ---------------------------------------------------------------------------
+// Id-bearing literalKeys (Task 047, backlog items 3-4 — same review,
+// 2026-10-24, as the rest of this module's rewrite engine).
+//
+// `literalKeys` (`core/authoring.ts`'s own `resolveParams()` contract)
+// means exactly one thing there: "never expression-resolve this field
+// against live `answers` at `buildBlueprint()` time." It does NOT mean
+// "this field never contains a fragment-local id" — `writeFile.content`
+// is the first, already-handled exception (a literalKey that DOES carry
+// local ids, just as Handlebars placeholders, rewritten by
+// `rewriteHandlebarsIds()` above instead of the generic JSONLogic walk).
+// These two are the same exception, generalized: specific literalKeys
+// fields, on specific actions, whose value is itself a plain local-id
+// string (or array of them) rather than opaque scaffold-authoring config
+// — so a plain idMap lookup (no Handlebars parsing, no JSONLogic walk)
+// is the correct rewrite for them.
+//
+// `writeFile`'s `jsonEscapeKeys`/`jsEscapeKeys`/`htmlEscapeKeys`/
+// `scriptCloseEscapeKeys` are all listed here, not just `jsonEscapeKeys`
+// (the one backlog named): all four share the exact same shape and the
+// exact same bug (`core/authoring.ts`'s own doc comments on each confirm
+// they're deliberately identical in everything but escaping target —
+// `jsEscapeKeys`/`htmlEscapeKeys`/`scriptCloseEscapeKeys` were added in
+// Tasks 042/043, after the backlog note was written against the first
+// one). Fixing only the named field would leave the three later ones
+// with the identical latent gap.
+//
+// `deriveAnswer`'s `transform`/`suffix` are deliberately absent from its
+// entry below — they are genuine opaque literals (an enum selector, a
+// fixed suffix string), never an id reference, unlike `from`/`to`.
+const ID_BEARING_LITERAL_KEYS: Readonly<
+  Record<string, { readonly arrayFields?: readonly string[]; readonly stringFields?: readonly string[] }>
+> = {
+  writeFile: {
+    arrayFields: ['jsonEscapeKeys', 'jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'],
+  },
+  deriveAnswer: {
+    stringFields: ['from', 'to'],
+  },
+};
+
+/**
+ * `deriveAnswer`'s `to` is the one field in the whole vocabulary that
+ * *introduces* a brand-new, fragment-local answers key, rather than
+ * referencing one already known from `local.questions` (D1) — unlike a
+ * declared question id, it never reaches `idMap` through the normal D1
+ * loop in `mountFragment()`, below. Walks `steps[]` plus every hook
+ * group's steps once, up front, registering each `to` into `idMap`
+ * namespaced exactly like a question id (`${namespace}__${to}`) — before
+ * the real rewrite pass (`rewriteStep()`/`rewriteParams()`) runs, so a
+ * `from` anywhere else that reads this derived key (same hook group, a
+ * different one, or `steps[]`), or a Handlebars `{{to}}` placeholder, or
+ * an escape-key-family entry naming it, all resolve to the same
+ * qualified id.
+ *
+ * Deliberately a flat collect-then-rewrite, not a single mutating walk
+ * in declaration order: a `to` doesn't carry runtime step-ordering
+ * information worth encoding here — only "does this literal string name
+ * a locally introduced id" — and a `from` reading a `to` that hasn't
+ * actually run yet at the real orchestrator's runtime is already
+ * possible (and already the fragment author's own mistake) with zero
+ * namespacing involved, unaffected by which pass-ordering this rewrite
+ * step picks.
+ */
+function collectDerivedAnswerIds(
+  allSteps: readonly ActionStep[],
+  namespace: string,
+  idMap: Map<string, string>
+): void {
+  for (const step of allSteps) {
+    if (step.action !== 'deriveAnswer' || !isPlainObject(step.params)) continue;
+    const to = step.params.to;
+    if (typeof to === 'string' && to.length > 0 && !idMap.has(to)) {
+      idMap.set(to, `${namespace}__${to}`);
+    }
+  }
+}
+
 /**
  * Rewrites one `ActionStep`'s `params`/`when` against `idMap`. `literalKeys`
  * (from `resolveAction(step.action)`, same source `core/authoring.ts`'s own
  * `resolveParams()` uses) names top-level `params` keys that are never
- * walked structurally — `writeFile`'s `content` is handled instead by the
- * dedicated Handlebars text rewrite immediately below, the one documented,
- * narrow exception (D5); any other `literalKeys` field (e.g. `writeFile`'s
- * own `jsonEscapeKeys`, or `patchFile`'s `anchor`/`path`) is left exactly as
- * the fragment author wrote it, consistent with those fields never being
- * answer-derived in the first place.
+ * walked structurally as JSONLogic — most of them (`patchFile`'s
+ * `anchor`/`path`, `deriveAnswer`'s `transform`/`suffix`) are genuine
+ * opaque literals, left exactly as the fragment author wrote them. Three
+ * narrow, documented exceptions carry local ids anyway and get rewritten
+ * through a different path instead: `writeFile`'s `content` (Handlebars
+ * text rewrite, D5, immediately below) and the `ID_BEARING_LITERAL_KEYS`
+ * fields (Task 047 — plain idMap lookup, `rewriteIdBearingLiteral()`).
  */
 function rewriteStep(step: ActionStep, idMap: ReadonlyMap<string, string>): ActionStep {
   const literalKeys = resolveAction(step.action)?.literalKeys ?? [];
@@ -148,6 +227,17 @@ function rewriteStep(step: ActionStep, idMap: ReadonlyMap<string, string>): Acti
   const when = step.when !== undefined ? rewriteJsonLogicIds(step.when, idMap) : undefined;
 
   return { action: step.action, params, ...(when !== undefined ? { when } : {}) };
+}
+
+/** A local id passes through unchanged if `idMap` has no entry for it — same "unknown id, leave it alone" convention `rewriteJsonLogicIds()` already applies. */
+function rewriteIdBearingLiteral(value: unknown, idMap: ReadonlyMap<string, string>): unknown {
+  if (typeof value === 'string') {
+    return idMap.get(value) ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => (typeof entry === 'string' ? idMap.get(entry) ?? entry : entry));
+  }
+  return value;
 }
 
 function rewriteParams(
@@ -160,9 +250,17 @@ function rewriteParams(
     return params;
   }
 
+  const idBearing = ID_BEARING_LITERAL_KEYS[action];
+
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {
-    out[key] = literalKeys.includes(key) ? value : rewriteJsonLogicIds(value, idMap);
+    if (!literalKeys.includes(key)) {
+      out[key] = rewriteJsonLogicIds(value, idMap);
+    } else if (idBearing?.arrayFields?.includes(key) || idBearing?.stringFields?.includes(key)) {
+      out[key] = rewriteIdBearingLiteral(value, idMap);
+    } else {
+      out[key] = value;
+    }
   }
 
   if (action === 'writeFile' && typeof out.content === 'string') {
@@ -230,6 +328,17 @@ export function mountFragment<Props>(
     idMap.set(question.id, qualified);
     questions.push({ ...question, id: qualified });
   }
+
+  // Task 047 — register every `deriveAnswer.to` across *all* of this
+  // fragment's steps (root `steps[]` and every hook group) into `idMap`
+  // before any rewriting happens, so it behaves exactly like a declared
+  // question id to every `from`/escape-key-family/Handlebars reference
+  // that reads it, regardless of which step or hook group either side
+  // lives in. See `collectDerivedAnswerIds()`'s own doc comment for why
+  // this is a separate, up-front pass rather than folded into the walk
+  // below.
+  const allLocalSteps = [...local.steps, ...Object.values(local.hooks ?? {}).flat()];
+  collectDerivedAnswerIds(allLocalSteps, namespace, idMap);
 
   const steps = local.steps.map((step) => rewriteStep(step, idMap));
   const hooks = local.hooks ? rewriteHooks(local.hooks, idMap) : undefined;

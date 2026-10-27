@@ -247,6 +247,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mountFragment()`'s rewrite engine** (Task 047) now also renames
+  local-id references inside `writeFile`'s
+  `jsonEscapeKeys`/`jsEscapeKeys`/`htmlEscapeKeys`/`scriptCloseEscapeKeys`
+  and `deriveAnswer`'s `from`/`to`, matching every other local-id
+  reference (Handlebars placeholders, JSONLogic `when`) that was already
+  namespaced on mount. `deriveAnswer`'s `to` — which introduces a new
+  fragment-local answers key, rather than referencing an existing
+  question — is now namespaced too, and registered before the rewrite
+  pass runs so any later `from`/escape-key/template reference to it
+  resolves consistently, regardless of which step or hook group either
+  side lives in. No shipped plugin combines `mountFragment()` with either
+  field yet; this closes a latent gap for future fragment authors.
 - **`deriveAnswer` hook action, `transform: 'js-identifier-suffix'`**
   (Task 046): `suffix` is now required and non-empty when this transform
   is used — a step that omitted it used to silently produce an
