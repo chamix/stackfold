@@ -1476,6 +1476,92 @@ describe('built-in action: deriveAnswer (hook) — Task 036', () => {
     expect(() => kind.schema.parse({ from: 'x', to: 'y', transform: 'not-a-real-transform' })).toThrow();
   });
 
+  // Backlog item (cross-verification Task 036, 2026-10-22; fixed Task
+  // 046, 2026-10-27, branch A of the derive-answer/fragment-rewrite
+  // 4-item cycle): `suffix` was `z.string().optional()` with no
+  // constraint, so a `js-identifier-suffix` step omitting `suffix`
+  // silently produced an identifier with no suffix at all —
+  // `toBridgeGlobal()`'s own doc comment already flags this as unsafe.
+  describe('"suffix" is required when transform is "js-identifier-suffix" (Task 046)', () => {
+    it('rejects a js-identifier-suffix step with "suffix" omitted entirely', () => {
+      const kind = deriveAnswerKind();
+      expect(() =>
+        kind.schema.parse({ from: 'packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix' }),
+      ).toThrow(/non-empty "suffix"/);
+    });
+
+    it('rejects a js-identifier-suffix step with "suffix" set to an empty string', () => {
+      const kind = deriveAnswerKind();
+      expect(() =>
+        kind.schema.parse({
+          from: 'packageName',
+          to: 'bridgeGlobal',
+          transform: 'js-identifier-suffix',
+          suffix: '',
+        }),
+      ).toThrow(/non-empty "suffix"/);
+    });
+
+    it('rejects a js-identifier-suffix step with "suffix" set to whitespace only', () => {
+      const kind = deriveAnswerKind();
+      expect(() =>
+        kind.schema.parse({
+          from: 'packageName',
+          to: 'bridgeGlobal',
+          transform: 'js-identifier-suffix',
+          suffix: '   ',
+        }),
+      ).toThrow(/non-empty "suffix"/);
+    });
+
+    it('does NOT require "suffix" for npm-slug — the constraint is specific to js-identifier-suffix', () => {
+      const kind = deriveAnswerKind();
+      expect(() => kind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' })).not.toThrow();
+    });
+
+    it('does NOT require "suffix" for current-year — the constraint is specific to js-identifier-suffix', () => {
+      const kind = deriveAnswerKind();
+      expect(() => kind.schema.parse({ from: 'unused', to: 'year', transform: 'current-year' })).not.toThrow();
+    });
+  });
+
+  // Backlog item (same cross-verification, 2026-10-22; fixed Task 046,
+  // 2026-10-27): `answers[from]` being `undefined` (a typo'd `from`, or
+  // a step ordering issue) used to silence into `''` via `?? ''`,
+  // unlike the rest of the vocabulary (`patchFile` throws if its target
+  // doesn't exist; `electron-ts` throws if `appName` is missing).
+  describe('throws when "from" names an answers key that is undefined (Task 046)', () => {
+    it('throws for transform: npm-slug when answers[from] is undefined', () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = {};
+      const parsed = kind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' });
+
+      expect(() => kind.handler(parsed, fakePorts(), answers)).toThrow(/answers\["appName"\] is undefined/);
+    });
+
+    it('throws for transform: js-identifier-suffix when answers[from] is undefined', () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = {};
+      const parsed = kind.schema.parse({
+        from: 'packageName',
+        to: 'bridgeGlobal',
+        transform: 'js-identifier-suffix',
+        suffix: 'Api',
+      });
+
+      expect(() => kind.handler(parsed, fakePorts(), answers)).toThrow(/answers\["packageName"\] is undefined/);
+    });
+
+    it('does NOT throw for transform: current-year even when answers[from] is undefined — "from" is accepted but unused', async () => {
+      const kind = deriveAnswerKind();
+      const answers: Answers = {};
+      const parsed = kind.schema.parse({ from: 'unused', to: 'year', transform: 'current-year' });
+
+      expect(() => kind.handler(parsed, fakePorts(), answers)).not.toThrow();
+      expect(answers['year']).toBe(new Date().getFullYear());
+    });
+  });
+
   describe('wired through the real pipeline (compileScaffold() → compileHookStep())', () => {
     it('a preInit deriveAnswer step, compiled via compileScaffold(), derives "packageName" into the real answers object passed to the compiled handler', async () => {
       const def = definition({

@@ -259,6 +259,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves consistently, regardless of which step or hook group either
   side lives in. No shipped plugin combines `mountFragment()` with either
   field yet; this closes a latent gap for future fragment authors.
+- **`deriveAnswer` hook action, `transform: 'js-identifier-suffix'`**
+  (Task 046): `suffix` is now required and non-empty when this transform
+  is used — a step that omitted it used to silently produce an
+  identifier with no suffix at all, exactly the collision risk
+  `toBridgeGlobal()` was written to avoid.
+- **`deriveAnswer` hook action**: a `from` that names an `answers` key
+  with no value (a typo, or a step-ordering mistake) now throws, instead
+  of silently resolving to an empty string — matching the rest of the
+  action vocabulary (`patchFile` throws on a missing file;
+  `electron-ts` throws on a missing `appName`). Does not apply to
+  `transform: 'current-year'`, which never reads `from`.
 - **`plugin-builder`'s generated `scaffold.json`** could become
   syntactically invalid JSON when `displayName`/`description` contained a
   literal `"` (ordinary, schema-accepted free text) — the generated
