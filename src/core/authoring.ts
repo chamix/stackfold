@@ -725,12 +725,33 @@ registerAction('patchFile', {
 // `ScaffoldDefinition` that wants a copyright year as a real `answers` entry.
 // ---------------------------------------------------------------------------
 
-const deriveAnswerSchema = z.object({
-  from: z.string().trim().min(1, 'deriveAnswer requires a non-empty "from"'),
-  to: z.string().trim().min(1, 'deriveAnswer requires a non-empty "to"'),
-  transform: z.enum(['npm-slug', 'js-identifier-suffix', 'current-year']),
-  suffix: z.string().optional(),
-});
+const deriveAnswerSchema = z
+  .object({
+    from: z.string().trim().min(1, 'deriveAnswer requires a non-empty "from"'),
+    to: z.string().trim().min(1, 'deriveAnswer requires a non-empty "to"'),
+    transform: z.enum(['npm-slug', 'js-identifier-suffix', 'current-year']),
+    suffix: z.string().optional(),
+  })
+  // Backlog item (cross-verification Task 036, 2026-10-22; fixed Task
+  // 046, 2026-10-27): `suffix` was `z.string().optional()` with no
+  // constraint, so a scaffold author could omit it for
+  // `js-identifier-suffix` and the handler would silently fall back to
+  // `suffix ?? ''` — producing an identifier with NO suffix at all,
+  // exactly the case `stringTransforms.ts`'s `toBridgeGlobal()` already
+  // documents as unsafe (collision with real `window` globals like
+  // `history`/`crypto`). `suffix` is only meaningful for this one
+  // transform, so the constraint is expressed as a `.refine()` here
+  // rather than restructuring the schema into a discriminated union —
+  // the two other transforms (`npm-slug`, `current-year`) never read
+  // `suffix` at all.
+  .refine(
+    (value) =>
+      value.transform !== 'js-identifier-suffix' || (value.suffix?.trim().length ?? 0) > 0,
+    {
+      message: 'deriveAnswer requires a non-empty "suffix" when transform is "js-identifier-suffix"',
+      path: ['suffix'],
+    },
+  );
 
 registerAction('deriveAnswer', {
   tag: 'hook',
@@ -738,12 +759,26 @@ registerAction('deriveAnswer', {
   literalKeys: ['from', 'to', 'transform', 'suffix'],
   handler: (params, _ports, answers): void => {
     const { from, to, transform, suffix } = params as z.infer<typeof deriveAnswerSchema>;
+    // Backlog item (same cross-verification, 2026-10-22; fixed Task 046,
+    // 2026-10-27): a `from` that doesn't name a real `answers` entry
+    // (typo, or an answer never populated) used to silence into `''`
+    // via `answers[from] ?? ''`, unlike the rest of the vocabulary
+    // (`patchFile` throws if its target doesn't exist; `electron-ts`
+    // throws if `appName` is missing). `current-year` is exempt: it
+    // never reads `answers[from]` at all (`from` is accepted but
+    // unused for that one case, by design — see the file-level comment
+    // above this block).
+    if (transform !== 'current-year' && answers[from] === undefined) {
+      throw new Error(
+        `deriveAnswer: answers["${from}"] is undefined — check "from" for a typo or a step ordering issue`,
+      );
+    }
     switch (transform) {
       case 'npm-slug':
-        answers[to] = toPackageName(String(answers[from] ?? ''));
+        answers[to] = toPackageName(String(answers[from]));
         break;
       case 'js-identifier-suffix':
-        answers[to] = toBridgeGlobal(String(answers[from] ?? ''), suffix ?? '');
+        answers[to] = toBridgeGlobal(String(answers[from]), suffix ?? '');
         break;
       case 'current-year':
         answers[to] = new Date().getFullYear();
