@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ZodError } from 'zod';
 import {
   compileScaffold,
   registerAction,
@@ -1471,6 +1472,28 @@ describe('built-in action: deriveAnswer (hook) — Task 036', () => {
     });
   });
 
+  // Backlog note (review Task 041, 2026-10-24; confirmed correct by the
+  // reviewer via manual proof at the time, never covered by a real test):
+  // two deriveAnswer steps that both write the same "to" resolve to the
+  // same answers entry, last-write-wins, with no crash or silent
+  // divergence — this is pre-existing handler semantics (`answers[to] =
+  // ...`, a plain object-property assignment), not something Task
+  // 046/047 introduced.
+  it('two deriveAnswer steps writing the same "to" resolve last-write-wins, no crash', async () => {
+    const firstKind = deriveAnswerKind();
+    const secondKind = resolveAction('deriveAnswer') as Extract<ActionKind, { tag: 'hook' }>;
+    const answers: Answers = { appName: 'My Cool App', otherName: 'Other App' };
+
+    const firstParams = firstKind.schema.parse({ from: 'appName', to: 'packageName', transform: 'npm-slug' });
+    await firstKind.handler(firstParams, fakePorts(), answers);
+    expect(answers['packageName']).toBe('my-cool-app');
+
+    const secondParams = secondKind.schema.parse({ from: 'otherName', to: 'packageName', transform: 'npm-slug' });
+    await secondKind.handler(secondParams, fakePorts(), answers);
+
+    expect(answers['packageName']).toBe('other-app');
+  });
+
   it('rejects malformed params (invalid transform) via zod', () => {
     const kind = deriveAnswerKind();
     expect(() => kind.schema.parse({ from: 'x', to: 'y', transform: 'not-a-real-transform' })).toThrow();
@@ -1485,33 +1508,54 @@ describe('built-in action: deriveAnswer (hook) — Task 036', () => {
   describe('"suffix" is required when transform is "js-identifier-suffix" (Task 046)', () => {
     it('rejects a js-identifier-suffix step with "suffix" omitted entirely', () => {
       const kind = deriveAnswerKind();
-      expect(() =>
-        kind.schema.parse({ from: 'packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix' }),
-      ).toThrow(/non-empty "suffix"/);
+      let error: unknown;
+      try {
+        kind.schema.parse({ from: 'packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix' });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(ZodError);
+      expect((error as ZodError).issues[0]?.message).toBe(
+        'deriveAnswer requires a non-empty "suffix" when transform is "js-identifier-suffix"',
+      );
     });
 
     it('rejects a js-identifier-suffix step with "suffix" set to an empty string', () => {
       const kind = deriveAnswerKind();
-      expect(() =>
+      let error: unknown;
+      try {
         kind.schema.parse({
           from: 'packageName',
           to: 'bridgeGlobal',
           transform: 'js-identifier-suffix',
           suffix: '',
-        }),
-      ).toThrow(/non-empty "suffix"/);
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(ZodError);
+      expect((error as ZodError).issues[0]?.message).toBe(
+        'deriveAnswer requires a non-empty "suffix" when transform is "js-identifier-suffix"',
+      );
     });
 
     it('rejects a js-identifier-suffix step with "suffix" set to whitespace only', () => {
       const kind = deriveAnswerKind();
-      expect(() =>
+      let error: unknown;
+      try {
         kind.schema.parse({
           from: 'packageName',
           to: 'bridgeGlobal',
           transform: 'js-identifier-suffix',
           suffix: '   ',
-        }),
-      ).toThrow(/non-empty "suffix"/);
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(ZodError);
+      expect((error as ZodError).issues[0]?.message).toBe(
+        'deriveAnswer requires a non-empty "suffix" when transform is "js-identifier-suffix"',
+      );
     });
 
     it('does NOT require "suffix" for npm-slug — the constraint is specific to js-identifier-suffix', () => {
