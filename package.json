@@ -12,7 +12,8 @@
     "dev": "tsx src/cli/index.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "e2e:playground": "node scripts/e2e-playground.mjs"
+    "e2e:playground": "node scripts/e2e-playground.mjs",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "scaffolding",
@@ -45,6 +46,7 @@
     "@types/react-dom": "^19.3.0",
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-vue": "^6.0.10",
+    "@vitest/coverage-v8": "^5.0.2",
     "@vue/compiler-sfc": "^3.5.44",
     "electron": "^44.4.5",
     "eslint": "^10.11.0",
