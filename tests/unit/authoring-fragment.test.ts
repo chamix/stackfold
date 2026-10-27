@@ -341,6 +341,7 @@ describe('mountFragment — id-bearing literalKeys rewrite (Task 047)', () => {
   it('a from in hooks.preInit sees the same namespaced id a "to" introduced by a step in hooks.postInit — pass-ordering does not matter (Task 047 design: collect-then-rewrite, not a single ordered walk)', () => {
     const fragment = (): Fragment => ({
       questions: [],
+      steps: [],
       hooks: {
         preInit: [
           { action: 'deriveAnswer', params: { from: 'packageName', to: 'year', transform: 'current-year' } },
@@ -386,6 +387,41 @@ describe('mountFragment — id-bearing literalKeys rewrite (Task 047)', () => {
 
     expect(params['path']).toBe('anchor');
     expect(params['anchor']).toBe('anchor');
+  });
+
+  // Backlog note (review Task 041, 2026-10-24; confirmed correct by the
+  // reviewer via manual proof at the time, never covered by a real test):
+  // a deriveAnswer "to" introduced by a fragment mounted INSIDE another
+  // fragment gets re-namespaced correctly by the outer mount too, same
+  // pattern as the existing Handlebars nesting test above
+  // ("nesting: a fragment-internal mountFragment() call is namespaced
+  // again by the outer mount, two levels deep").
+  it('nesting: a deriveAnswer "to" introduced by an inner mountFragment() call is namespaced again by the outer mount, two levels deep', () => {
+    const innerFragment = (): Fragment => ({
+      questions: [q('appName')],
+      steps: [{ action: 'deriveAnswer', params: { from: 'appName', to: 'packageName', transform: 'npm-slug' } }],
+    });
+    const outerFragment = (): Fragment => {
+      const inner = mountFragment(innerFragment, {}, { namespace: 'inner' });
+      return {
+        questions: [...inner.questions],
+        steps: [
+          ...inner.steps,
+          {
+            action: 'deriveAnswer',
+            params: { from: 'inner__packageName', to: 'bridgeGlobal', transform: 'js-identifier-suffix', suffix: 'Api' },
+          },
+        ],
+      };
+    };
+
+    const mounted = mountFragment(outerFragment, {}, { namespace: 'outer' });
+    const innerStep = mounted.steps[0]!.params as Record<string, unknown>;
+    const outerStep = mounted.steps[1]!.params as Record<string, unknown>;
+
+    expect(innerStep['to']).toBe('outer__inner__packageName');
+    expect(outerStep['from']).toBe('outer__inner__packageName');
+    expect(outerStep['to']).toBe('outer__bridgeGlobal');
   });
 });
 
