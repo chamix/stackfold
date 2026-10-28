@@ -49,7 +49,20 @@ export default defineConfig({
      * then many parallel workers repeatedly hitting the same
      * import-time crash).
      */
-    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.manual-test-playground/**'],
+    /**
+     * `.manual-test-playground/**` holds standalone scaffolded apps
+     * (e.g. `app-react`) used for manual, ad-hoc verification -- each
+     * has its own `package.json`, `node_modules`, and `vitest.config.ts`
+     * (with its own `environment: 'jsdom'` and `setupFiles` for
+     * `@testing-library/jest-dom`) meant to be run via that project's
+     * own `npm test`, standalone. It is git-excluded scratch output
+     * (see `.gitignore`), not part of this repo's `src/**` suite, and
+     * the root config has no `jest-dom` setup for it, so picking its
+     * `*.test.tsx` files up here only ever fails
+     * (`Invalid Chai property: toBeInTheDocument`) regardless of which
+     * environment they run under.
+     */
     /**
      * Coverage tooling (backlog item deferred across Tasks 039 and 041,
      * resolved 2026-10-25, Task 045) and thresholds per claude-blueprints'
