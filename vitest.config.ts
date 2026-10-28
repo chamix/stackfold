@@ -49,20 +49,20 @@ export default defineConfig({
      * then many parallel workers repeatedly hitting the same
      * import-time crash).
      */
-    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
+    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.manual-test-playground/**'],
     /**
-     * `.manual-test-playground/app-react`'s RTL test (`@testing-library/react`)
-     * needs a DOM global (`document`) that Vitest's default `node`
-     * environment never provides. Scoped via `environmentMatchGlobs`
-     * rather than flipping the whole suite to `jsdom`: every other test
-     * in this repo is a plain Node CLI test and gets no benefit from
-     * (and pays the overhead of) a DOM environment. `.manual-test-playground`
-     * is itself git-excluded/throwaway scaffolding output, not part of
-     * the CI-covered `src/**` suite.
+     * `.manual-test-playground/**` holds standalone scaffolded apps
+     * (e.g. `app-react`) used for manual, ad-hoc verification -- each
+     * has its own `package.json`, `node_modules`, and `vitest.config.ts`
+     * (with its own `environment: 'jsdom'` and `setupFiles` for
+     * `@testing-library/jest-dom`) meant to be run via that project's
+     * own `npm test`, standalone. It is git-excluded scratch output
+     * (see `.gitignore`), not part of this repo's `src/**` suite, and
+     * the root config has no `jest-dom` setup for it, so picking its
+     * `*.test.tsx` files up here only ever fails
+     * (`Invalid Chai property: toBeInTheDocument`) regardless of which
+     * environment they run under.
      */
-    environmentMatchGlobs: [
-      ['**/*.test.tsx', 'jsdom'],
-    ],
     /**
      * Coverage tooling (backlog item deferred across Tasks 039 and 041,
      * resolved 2026-10-25, Task 045) and thresholds per claude-blueprints'
