@@ -117,7 +117,7 @@ const REGISTRY_ANCHOR = '// stackfold-plugin-registry:end';
 export default defineScaffold({
   id: 'plugin-builder',
   description:
-    'Scaffolds a brand-new stackfold plugin, authored as a TS scaffold.ts + synth (SK-ADR-003), and ' +
+    'Scaffolds a brand-new stackfold plugin, authored as a TS scaffold.ts + synth, and ' +
     "registers it into stackfold's own plugin registry.",
   help: {
     name: 'Plugin Builder',

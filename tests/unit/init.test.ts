@@ -120,12 +120,20 @@ function setup(opts: {
   return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs, askCalls, askedQuestions, openCalls };
 }
 
-/** Lines following `title` in the output, up to the next non-indented line. */
+/**
+ * Collects the indented lines following `title` (trimmed), stopping at the
+ * first non-blank, non-indented line. Blank lines are skipped rather than
+ * treated as the end of the section — `formatPluginListEntry()` (and the
+ * `printAvailable()`/`runList()` callers that use it) separate each
+ * plugin's block with one, so a multi-plugin listing still reads as a
+ * single section here.
+ */
 function section(lines: string[], title: string): string[] {
   const start = lines.findIndex((l) => l.startsWith(title));
   if (start === -1) return [];
   const items: string[] = [];
   for (const line of lines.slice(start + 1)) {
+    if (line === '') continue;
     if (!line.startsWith('  ')) break;
     items.push(line.trim());
   }
@@ -139,7 +147,7 @@ describe('runInit — argument handling (exit 1, nothing touched)', () => {
     expect(await runInit(undefined, 'my-app', s.deps)).toBe(1);
 
     expect(s.stderr.join('\n')).toMatch(/no stack specified/);
-    expect(section(s.stderr, 'Available stacks:')).toEqual(['fake  fake description', 'other  other description']);
+    expect(section(s.stderr, 'Available stacks:')).toEqual(['fake', 'fake description', 'other', 'other description']);
     expect(s.ensuredDirs).toEqual([]);
     expect(s.stdout).toEqual([]);
   });
@@ -150,7 +158,7 @@ describe('runInit — argument handling (exit 1, nothing touched)', () => {
     expect(await runInit('rails', 'my-app', s.deps)).toBe(1);
 
     expect(s.stderr.join('\n')).toContain('unknown stack "rails"');
-    expect(section(s.stderr, 'Available stacks:')).toHaveLength(2);
+    expect(section(s.stderr, 'Available stacks:')).toHaveLength(4); // 2 plugins x (heading + description)
     expect(s.ensuredDirs).toEqual([]);
   });
 

@@ -14,7 +14,7 @@ function fakePlugin(id: string, description: string, help?: StackfoldPlugin['hel
 }
 
 describe('runList', () => {
-  it('lists every registered plugin, one line each', () => {
+  it('lists every registered plugin as its own block, separated by a blank line', () => {
     const stdout: string[] = [];
     const registry: PluginRegistry = {
       resolve: () => undefined,
@@ -23,7 +23,14 @@ describe('runList', () => {
 
     runList({ registry, stdout: (l) => stdout.push(l) });
 
-    expect(stdout).toEqual(['Available stacks:', '  fake  fake description', '  other  other description']);
+    expect(stdout).toEqual([
+      'Available stacks:',
+      '  fake',
+      '      fake description',
+      '',
+      '  other',
+      '      other description',
+    ]);
   });
 
   it('uses the display name from help.name when present', () => {
@@ -35,7 +42,7 @@ describe('runList', () => {
 
     runList({ registry, stdout: (l) => stdout.push(l) });
 
-    expect(stdout).toEqual(['Available stacks:', '  Fake Stack (fake)  fake description']);
+    expect(stdout).toEqual(['Available stacks:', '  Fake Stack (fake)', '      fake description']);
   });
 
   it('reports no plugins registered rather than an empty list', () => {

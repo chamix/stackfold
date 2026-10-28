@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import type { PluginRegistry } from '../../core/ports.js';
-import { formatPluginInfo, formatPluginListLine } from '../pluginHelp.js';
+import { formatPluginInfo, formatPluginListEntry } from '../pluginHelp.js';
 
 export interface InfoCommandDependencies {
   registry: PluginRegistry;
@@ -31,7 +31,10 @@ export function runInfo(stack: string, deps: InfoCommandDependencies): number {
   if (!plugin) {
     stderr(`stackfold info: unknown stack "${stack}".`);
     stderr('Available stacks:');
-    for (const p of registry.list()) stderr(`  ${formatPluginListLine(p)}`);
+    registry.list().forEach((p, index) => {
+      if (index > 0) stderr('');
+      for (const line of formatPluginListEntry(p)) stderr(`  ${line}`);
+    });
     return 1;
   }
 

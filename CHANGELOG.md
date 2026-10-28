@@ -244,6 +244,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `plugins/plugin-builder/index.ts` to `infra/fs.ts`, and is now injected by
   `cli/index.ts` — the composition root, same as every other concrete
   adapter — rather than defaulted inside the plugin module.
+- **`stackfold list` / `info`'s "Available stacks" listing** (`pluginHelp.ts`'s
+  new `formatPluginListEntry()`): each plugin now prints as its own
+  heading-plus-description block — the description word-wrapped and
+  indented onto its own line(s), with a blank line between plugins —
+  instead of one long, un-wrapped line that collided with the terminal's
+  right edge. Internal governance references (`ARCH-001`, `SK-ADR-003`,
+  `Task NNN`) were also dropped from every plugin's `description`/
+  `help.details`: they're dev-lifecycle artifacts tracked in `.agents/`
+  and on GitHub, with no value to someone just picking a stack.
 
 ### Fixed
 

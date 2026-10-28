@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import type { PluginRegistry } from '../../core/ports.js';
-import { formatPluginListLine } from '../pluginHelp.js';
+import { formatPluginListEntry } from '../pluginHelp.js';
 
 export interface ListCommandDependencies {
   registry: PluginRegistry;
@@ -8,10 +8,10 @@ export interface ListCommandDependencies {
 }
 
 /**
- * `stackfold list` — every registered plugin, one line each: display
- * name (falls back to `id`) plus description. Shares its line format
- * with `init`'s own "Available stacks" error listing, via
- * `pluginHelp.ts`.
+ * `stackfold list` — every registered plugin, one block each: display
+ * name (falls back to `id`) plus its word-wrapped description. Shares
+ * its entry format with `init`'s own "Available stacks" error listing,
+ * via `pluginHelp.ts`.
  */
 export function registerListCommand(program: Command, deps: ListCommandDependencies): void {
   program
@@ -32,5 +32,8 @@ export function runList(deps: ListCommandDependencies): void {
   }
 
   stdout('Available stacks:');
-  for (const plugin of plugins) stdout(`  ${formatPluginListLine(plugin)}`);
+  plugins.forEach((plugin, index) => {
+    if (index > 0) stdout('');
+    for (const line of formatPluginListEntry(plugin)) stdout(`  ${line}`);
+  });
 }
