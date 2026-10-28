@@ -51,6 +51,19 @@ export default defineConfig({
      */
     exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
     /**
+     * `.manual-test-playground/app-react`'s RTL test (`@testing-library/react`)
+     * needs a DOM global (`document`) that Vitest's default `node`
+     * environment never provides. Scoped via `environmentMatchGlobs`
+     * rather than flipping the whole suite to `jsdom`: every other test
+     * in this repo is a plain Node CLI test and gets no benefit from
+     * (and pays the overhead of) a DOM environment. `.manual-test-playground`
+     * is itself git-excluded/throwaway scaffolding output, not part of
+     * the CI-covered `src/**` suite.
+     */
+    environmentMatchGlobs: [
+      ['**/*.test.tsx', 'jsdom'],
+    ],
+    /**
      * Coverage tooling (backlog item deferred across Tasks 039 and 041,
      * resolved 2026-10-25, Task 045) and thresholds per claude-blueprints'
      * ADR-015 ("Minimum coverage threshold as a Pre-Delivery/Review
