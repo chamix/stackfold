@@ -36,7 +36,7 @@ function colorizeId(id: string): string {
 
 /**
  * `"<displayName> (<id>)"` when they differ, or just the (colorized) id
- * when there's no separate display name — shared by `formatPluginListLine()`
+ * when there's no separate display name — shared by `formatPluginListEntry()`
  * and `formatPluginInfo()` so the two headings never drift apart.
  */
 function pluginHeading(plugin: StackfoldPlugin): string {
@@ -44,9 +44,52 @@ function pluginHeading(plugin: StackfoldPlugin): string {
   return name === plugin.id ? colorizeId(name) : `${name} (${colorizeId(plugin.id)})`;
 }
 
-/** One line: `"<heading>  <description>"` — used in every stack listing. */
-export function formatPluginListLine(plugin: StackfoldPlugin): string {
-  return `${pluginHeading(plugin)}  ${plugin.description}`;
+/**
+ * Width, in characters, that `formatPluginListEntry()` wraps a plugin's
+ * description to (before the indent below is added). Deliberately a
+ * fixed constant rather than terminal-width detection: descriptions are
+ * a few sentences at most, a plain constant keeps the output identical
+ * run to run (and easy to assert on in tests), and 76 columns reads
+ * comfortably even on a standard 80-column terminal once the 2-space
+ * `list`/`init` caller prefix is added on top.
+ */
+const LIST_DESCRIPTION_WIDTH = 76;
+const LIST_DESCRIPTION_INDENT = '    ';
+
+/** Greedy word-wrap: breaks `text` into lines no longer than `width` (never splits a word). */
+function wrapText(text: string, width: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [''];
+
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current === '' ? word : `${current} ${word}`;
+    if (candidate.length > width && current !== '') {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+/**
+ * One plugin's `stackfold list` / "Available stacks" entry: a heading
+ * line (`pluginHeading()`), then its description word-wrapped and
+ * indented onto its own line(s) — so a longer description reads as a
+ * short, legible paragraph instead of one line that runs past the
+ * terminal's right edge and wraps wherever the terminal happens to
+ * break it. Used by `list`, `info`'s "unknown stack" fallback, and
+ * `init`'s own "Available stacks" error listing.
+ */
+export function formatPluginListEntry(plugin: StackfoldPlugin): string[] {
+  return [
+    pluginHeading(plugin),
+    ...wrapText(plugin.description, LIST_DESCRIPTION_WIDTH).map((line) => `${LIST_DESCRIPTION_INDENT}${line}`),
+  ];
 }
 
 /**

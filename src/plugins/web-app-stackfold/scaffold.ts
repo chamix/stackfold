@@ -135,7 +135,7 @@ export default defineScaffold({
   id: 'web-app-stackfold',
   description:
     'Web app (standalone HTML, or an SPA in React/Vue/vanilla + Vite) — merges the old web-app-spa and ' +
-    'web-app-standalone-html plugins into one, authored via the scaffold-authoring system (SK-ADR-003).',
+    'web-app-standalone-html plugins into one, authored via the scaffold-authoring system.',
   help: {
     name: 'Web App',
     details:

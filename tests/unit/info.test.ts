@@ -37,6 +37,11 @@ describe('runInfo', () => {
 
     expect(code).toBe(1);
     expect(stdout).toEqual([]);
-    expect(stderr).toEqual(['stackfold info: unknown stack "rails".', 'Available stacks:', '  fake  fake description']);
+    expect(stderr).toEqual([
+      'stackfold info: unknown stack "rails".',
+      'Available stacks:',
+      '  fake',
+      '      fake description',
+    ]);
   });
 });

@@ -107,7 +107,7 @@ export default defineScaffold({
   id: 'electron-stackfold',
   description:
     'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge) — ' +
-    'authored declaratively via the scaffold-authoring system (ARCH-001), a functional port of electron-ts.',
+    'authored declaratively via the scaffold-authoring system, a functional port of electron-ts.',
   help: {
     name: 'Electron + TypeScript (declarative)',
     details:
@@ -115,7 +115,7 @@ export default defineScaffold({
       'renderer, a narrow typed preload bridge (no raw ipcRenderer exposure), and a policy that opens external ' +
       'links in the OS browser instead of a new Electron window. Settings (Dark Mode), Skins (user-editable ' +
       'visual presets) and About/Help windows are optional, prompted during init. Authored as a declarative ' +
-      'ScaffoldDefinition (Task 037) rather than hand-written TypeScript — see electron-ts for the original. ' +
+      'ScaffoldDefinition rather than hand-written TypeScript — see electron-ts for the original. ' +
       'Requires Node 22+ and enough disk/network for the Electron binary download on first `npm install`.',
   },
 

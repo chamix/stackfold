@@ -13,7 +13,7 @@ import type { PluginRegistry } from '../../core/ports.js';
 import type { Answers, AnswerValue, QuestionDefinition } from '../../core/types.js';
 import type { ProjectOpener } from '../../infra/open.js';
 import { StaticPrompter } from '../../infra/prompter.js';
-import { formatPluginListLine } from '../pluginHelp.js';
+import { formatPluginListEntry } from '../pluginHelp.js';
 
 /**
  * The `claude-blueprints` governance workflow drops these into a target
@@ -231,7 +231,10 @@ function coerceAnswerValue(raw: string): AnswerValue {
 
 function printAvailable(registry: PluginRegistry, write: (line: string) => void): void {
   write('Available stacks:');
-  for (const p of registry.list()) write(`  ${formatPluginListLine(p)}`);
+  registry.list().forEach((p, index) => {
+    if (index > 0) write('');
+    for (const line of formatPluginListEntry(p)) write(`  ${line}`);
+  });
 }
 
 /** Best-effort failure reporting (initial_scaffold.md §3.2 resolution). */
