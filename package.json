@@ -9,6 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-templates.mjs",
     "dev": "tsx src/cli/index.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
