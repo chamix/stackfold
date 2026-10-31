@@ -167,11 +167,14 @@ Terraform-module-style so two fragments never collide on a question id.
 
 This authoring system is how 3 of the 4 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`) are built
-today; `electron-ts` remains hand-written as a comparison/reference
-implementation, with no forced migration. The full design rationale
-lives in this project's governance ADRs (SK-ADR-002/003/005 — tracked
-outside this public repo; see the [CHANGELOG](./CHANGELOG.md) for a
-plain-language summary of each change).
+today. `electron-ts` remains hand-written on purpose: it's the
+reference implementation the declarative system is checked against, so
+if the declarative approach can't express something `electron-ts` does
+by hand, that's a signal the authoring system still has a gap to
+close. Both are kept side by side indefinitely — see
+[Built-in plugins](#built-in-plugins) above — and `stackfold` itself is
+init-only, so neither needs to migrate to the other. See the
+[CHANGELOG](./CHANGELOG.md) for how this evolved release by release.
 
 ## Architecture
 
