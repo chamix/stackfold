@@ -122,6 +122,43 @@ function waitForServer(url: string, timeoutMs: number): Promise<void> {
   });
 }
 
+/**
+ * 2026-10-31 finding: killing the `npx vite preview` child `execa` spawns
+ * on Windows does not reliably terminate it -- `npx` wraps the real `vite`
+ * process through an extra cmd.exe/node indirection layer, and
+ * `ResultPromise#kill()` on that top-level handle doesn't always propagate.
+ * When it doesn't, the awaited promise never settles, hanging this cleanup
+ * step (and therefore the whole test, then the next afterEach) until
+ * Vitest's own test/hook timeouts kill the run from the outside --
+ * confirmed via debug instrumentation: every real step up through
+ * `page.goto` completed in under 2s, so the entire ~12-minute failure was
+ * spent here. Bounding the wait with a race means cleanup can never hang
+ * the suite again. It does NOT fix the underlying orphaned-process leak --
+ * if kill() silently fails, the real vite preview process (and its port)
+ * keeps running in the background after the test exits. That is a real,
+ * separate problem (worth a Windows-specific taskkill /T /F follow-up, or
+ * spawning vite directly instead of through npx to shorten the process
+ * tree), but out of scope here: this fix only guarantees the test suite
+ * itself can never hang because of it.
+ */
+async function killPreview(cp: ResultPromise | undefined): Promise<void> {
+  if (!cp) return;
+  // Confirmed 2026-10-31: on Windows, cp.kill() alone leaves the real vite
+  // process orphaned (it's spawned as a grandchild through npx's own
+  // cmd.exe/node wrapper, and the kill signal doesn't propagate down that
+  // chain) -- the orphan then holds an open handle on the temp project dir,
+  // which surfaced as a real (fast, not hanging) 'EBUSY: resource busy or
+  // locked, rmdir ...' failure on the next cleanup step. taskkill /T walks
+  // the whole process tree instead of just the top-level handle; /F forces
+  // instead of waiting for a graceful exit.
+  if (process.platform === 'win32' && cp.pid !== undefined) {
+    await execa('taskkill', ['/pid', String(cp.pid), '/t', '/f'], { reject: false });
+  } else {
+    cp.kill();
+  }
+  await Promise.race([cp.catch(() => undefined), new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5_000))]);
+}
+
 describe.skipIf(!RUN_E2E_TESTS)(
   'web-app-stackfold plugin — launch test (tier 5: real CLI console + real browser)',
   () => {
@@ -133,11 +170,8 @@ describe.skipIf(!RUN_E2E_TESTS)(
     }, 3 * 60_000 + 20_000);
 
     afterEach(async () => {
-      if (activePreview) {
-        activePreview.kill();
-        await activePreview.catch(() => undefined);
-        activePreview = undefined;
-      }
+      await killPreview(activePreview);
+      activePreview = undefined;
     });
 
     it.each(SPA_APP_TYPES)(
@@ -183,12 +217,9 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          if (activePreview) {
-            activePreview.kill();
-            await activePreview.catch(() => undefined);
-            activePreview = undefined;
-          }
-          await rm(root, { recursive: true, force: true });
+          await killPreview(activePreview);
+          activePreview = undefined;
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       12 * 60_000
@@ -242,12 +273,9 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          if (activePreview) {
-            activePreview.kill();
-            await activePreview.catch(() => undefined);
-            activePreview = undefined;
-          }
-          await rm(root, { recursive: true, force: true });
+          await killPreview(activePreview);
+          activePreview = undefined;
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       12 * 60_000
@@ -297,12 +325,9 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          if (activePreview) {
-            activePreview.kill();
-            await activePreview.catch(() => undefined);
-            activePreview = undefined;
-          }
-          await rm(root, { recursive: true, force: true });
+          await killPreview(activePreview);
+          activePreview = undefined;
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       12 * 60_000
@@ -349,7 +374,7 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          await rm(root, { recursive: true, force: true });
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       60_000
@@ -400,7 +425,7 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          await rm(root, { recursive: true, force: true });
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       60_000
@@ -448,7 +473,7 @@ describe.skipIf(!RUN_E2E_TESTS)(
             await browser.close();
           }
         } finally {
-          await rm(root, { recursive: true, force: true });
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // Windows: tolerate a brief EBUSY/EPERM right after killPreview()
         }
       },
       60_000
