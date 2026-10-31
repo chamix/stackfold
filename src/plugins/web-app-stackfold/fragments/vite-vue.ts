@@ -16,7 +16,13 @@
  * block).
  *
  * `props.when` (always `WHEN_SPA_VUE` — see `../scaffold.ts`) gates every
- * step: active only when `appType === 'spa-vue'`.
+ * step: active only when `appType === 'spa-vue'`. Task 050
+ * (.agents/specs/050-web-app-stackfold-intro-content.md §Step 1) adds
+ * `props.introWhen`/`props.bareWhen` (`WHEN_SPA_VUE_INTRO`/
+ * `WHEN_SPA_VUE_BARE`), used *only* on the `src/App.vue` step — the
+ * "main display file" — split into two mutually-exclusive `writeFile`
+ * steps instead; every other step keeps using the plain `when` prop,
+ * unchanged.
  */
 import { file, npmInstall, step } from '../../../authoring/builder.js';
 import { loadTemplate } from '../../../authoring/templateLoader.js';
@@ -30,14 +36,19 @@ const INDEX_HTML_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/index.html.
 const MAIN_TS_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/main.ts.hbs');
 const ENV_D_TS_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/env.d.ts.hbs');
 const APP_VUE_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/App.vue.hbs');
+const APP_VUE_INTRO_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/App-intro.vue.hbs');
 const APP_TEST_TS_TEMPLATE = loadTemplate(dir, '../templates/vite-vue/App.test.ts.hbs');
 
 export interface ViteVueFragmentProps {
   /** `WHEN_SPA_VUE` from `../scaffold.ts` — true only when `appType === 'spa-vue'`. */
   when: unknown;
+  /** `WHEN_SPA_VUE_INTRO` from `../scaffold.ts` — true only when `appType === 'spa-vue'` and `includeStackfoldIntro` is true. Used only on the `src/App.vue` step. */
+  introWhen: unknown;
+  /** `WHEN_SPA_VUE_BARE` from `../scaffold.ts` — true only when `appType === 'spa-vue'` and `includeStackfoldIntro` is false. Used only on the `src/App.vue` step. */
+  bareWhen: unknown;
 }
 
-export const viteVueFragment: FragmentFactory<ViteVueFragmentProps> = ({ when }): Fragment => ({
+export const viteVueFragment: FragmentFactory<ViteVueFragmentProps> = ({ when, introWhen, bareWhen }): Fragment => ({
   questions: [],
   steps: [
     file('package.json', PACKAGE_JSON_TEMPLATE, { strategy: 'json-merge', when }),
@@ -53,11 +64,21 @@ export const viteVueFragment: FragmentFactory<ViteVueFragmentProps> = ({ when })
       'writeFile',
       {
         path: 'src/App.vue',
+        content: APP_VUE_INTRO_TEMPLATE,
+        jsonEscapeKeys: ['appName'],
+        scriptCloseEscapeKeys: ['appName'],
+      },
+      { when: introWhen }
+    ),
+    step(
+      'writeFile',
+      {
+        path: 'src/App.vue',
         content: APP_VUE_TEMPLATE,
         jsonEscapeKeys: ['appName'],
         scriptCloseEscapeKeys: ['appName'],
       },
-      { when }
+      { when: bareWhen }
     ),
     file('src/App.test.ts', APP_TEST_TS_TEMPLATE, { when }),
     npmInstall({ when }),

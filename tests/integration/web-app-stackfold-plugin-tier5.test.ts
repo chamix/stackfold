@@ -53,8 +53,19 @@ function execNpm(args: string[], cwd: string, timeout: number): Promise<{ code: 
  * Spawns the real, built `stackfold` CLI — not `plugin.buildBlueprint()` —
  * so this tier actually exercises `cli/index.ts`/Commander/the
  * non-interactive `--answer` path, the same binary a console user runs.
+ *
+ * `extraAnswers` (Task 050,
+ * .agents/specs/050-web-app-stackfold-intro-content.md §Step 1) —
+ * optional, additional `--answer key=value` flags appended after the 4
+ * base ones, e.g. `{ includeStackfoldIntro: 'false' }`. Defaults to none
+ * — every pre-existing call site keeps behaving exactly as before.
  */
-function runStackfoldInit(targetDir: string, appType: string, timeout: number): Promise<{ code: number; output: string }> {
+function runStackfoldInit(
+  targetDir: string,
+  appType: string,
+  timeout: number,
+  extraAnswers: Record<string, string> = {}
+): Promise<{ code: number; output: string }> {
   const args = [
     STACKFOLD_CLI,
     'init',
@@ -68,6 +79,7 @@ function runStackfoldInit(targetDir: string, appType: string, timeout: number): 
     `author=${BASE_ANSWERS.author}`,
     '--answer',
     `appType=${appType}`,
+    ...Object.entries(extraAnswers).flatMap(([key, value]) => ['--answer', `${key}=${value}`]),
   ];
   return new Promise((resolvePromise) => {
     execFile(process.execPath, args, { cwd: REPO_ROOT, timeout }, (error, stdout, stderr) => {
@@ -182,6 +194,120 @@ describe.skipIf(!RUN_E2E_TESTS)(
       12 * 60_000
     );
 
+    // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+    // §Step 1) — the opt-out intro block's safety net: `false` must
+    // still render exactly as today (no intro image, same bare h1), and
+    // `true` (the default) must render the intro image alongside it,
+    // with zero console/page errors either way.
+    it.each(SPA_APP_TYPES)(
+      'appType: "%s" — includeStackfoldIntro: false renders the same bare app as today (no Stackfold intro image)',
+      async (appType) => {
+        const root = await mkdtemp(join(tmpdir(), `stackfold-web-app-stackfold-tier5-intro-false-${appType}-`));
+        try {
+          const projectDir = join(root, 'generated');
+
+          const init = await runStackfoldInit(projectDir, appType, 8 * 60_000, { includeStackfoldIntro: 'false' });
+          expect(init.code, `stackfold init failed:\n${init.output}`).toBe(0);
+
+          const buildProject = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
+          expect(buildProject.code, `npm run build failed:\n${buildProject.output}`).toBe(0);
+
+          const port = await getFreePort();
+          const previewUrl = `http://localhost:${port}/`;
+          activePreview = execa('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], {
+            cwd: projectDir,
+            reject: false,
+          });
+
+          await waitForServer(previewUrl, 20_000);
+
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+
+            const consoleErrors: string[] = [];
+            page.on('console', (msg) => {
+              if (msg.type() === 'error') consoleErrors.push(msg.text());
+            });
+            page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+            await page.goto(previewUrl, { waitUntil: 'load' });
+
+            expect((await page.locator('h1').textContent())?.trim()).toBe(BASE_ANSWERS.appName);
+            expect(await page.locator('img[alt="Stackfold"]').count()).toBe(0);
+            expect(consoleErrors, `appType "${appType}" produced console/page errors: ${consoleErrors.join('; ')}`).toEqual(
+              []
+            );
+          } finally {
+            await browser.close();
+          }
+        } finally {
+          if (activePreview) {
+            activePreview.kill();
+            await activePreview.catch(() => undefined);
+            activePreview = undefined;
+          }
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      12 * 60_000
+    );
+
+    it.each(SPA_APP_TYPES)(
+      'appType: "%s" — includeStackfoldIntro: true (the default) renders the Stackfold intro image alongside the app',
+      async (appType) => {
+        const root = await mkdtemp(join(tmpdir(), `stackfold-web-app-stackfold-tier5-intro-true-${appType}-`));
+        try {
+          const projectDir = join(root, 'generated');
+
+          const init = await runStackfoldInit(projectDir, appType, 8 * 60_000, { includeStackfoldIntro: 'true' });
+          expect(init.code, `stackfold init failed:\n${init.output}`).toBe(0);
+
+          const buildProject = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
+          expect(buildProject.code, `npm run build failed:\n${buildProject.output}`).toBe(0);
+
+          const port = await getFreePort();
+          const previewUrl = `http://localhost:${port}/`;
+          activePreview = execa('npx', ['vite', 'preview', '--port', String(port), '--strictPort'], {
+            cwd: projectDir,
+            reject: false,
+          });
+
+          await waitForServer(previewUrl, 20_000);
+
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+
+            const consoleErrors: string[] = [];
+            page.on('console', (msg) => {
+              if (msg.type() === 'error') consoleErrors.push(msg.text());
+            });
+            page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+            await page.goto(previewUrl, { waitUntil: 'load' });
+
+            expect((await page.locator('h1').textContent())?.trim()).toBe(BASE_ANSWERS.appName);
+            const introImageSrc = await page.locator('img[alt="Stackfold"]').getAttribute('src');
+            expect(introImageSrc).toMatch(/^data:image\/webp;base64,/);
+            expect(consoleErrors, `appType "${appType}" produced console/page errors: ${consoleErrors.join('; ')}`).toEqual(
+              []
+            );
+          } finally {
+            await browser.close();
+          }
+        } finally {
+          if (activePreview) {
+            activePreview.kill();
+            await activePreview.catch(() => undefined);
+            activePreview = undefined;
+          }
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      12 * 60_000
+    );
+
     it(
       'appType: "standalone-html" — real CLI init produces an index.html a real browser renders correctly, with zero network requests after load',
       async () => {
@@ -217,6 +343,105 @@ describe.skipIf(!RUN_E2E_TESTS)(
 
             expect(await page.title()).toBe(BASE_ANSWERS.appName);
             expect((await page.locator('h1').textContent())?.trim()).toBe(BASE_ANSWERS.appName);
+            expect(consoleErrors).toEqual([]);
+            expect(requestsAfterLoad).toEqual([]);
+          } finally {
+            await browser.close();
+          }
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      60_000
+    );
+
+    // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+    // §Step 1) — the opt-out intro block's safety net, standalone-html's
+    // own `file://` + zero-post-load-network invariant unaffected either
+    // way (the intro image is a literal data-URI, never a network fetch).
+    it(
+      'appType: "standalone-html" — includeStackfoldIntro: false renders the same bare index.html as today (no Stackfold intro image)',
+      async () => {
+        const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-tier5-standalone-html-intro-false-'));
+        try {
+          const projectDir = join(root, 'generated');
+
+          const init = await runStackfoldInit(projectDir, 'standalone-html', 30_000, { includeStackfoldIntro: 'false' });
+          expect(init.code, `stackfold init failed:\n${init.output}`).toBe(0);
+
+          const indexHtmlUrl = `file://${join(projectDir, 'index.html')}`;
+
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+
+            const consoleErrors: string[] = [];
+            page.on('console', (msg) => {
+              if (msg.type() === 'error') consoleErrors.push(msg.text());
+            });
+            page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+            let loaded = false;
+            const requestsAfterLoad: string[] = [];
+            page.on('request', (req) => {
+              if (loaded) requestsAfterLoad.push(req.url());
+            });
+
+            await page.goto(indexHtmlUrl, { waitUntil: 'load' });
+            loaded = true;
+
+            await page.waitForTimeout(500);
+
+            expect((await page.locator('h1').textContent())?.trim()).toBe(BASE_ANSWERS.appName);
+            expect(await page.locator('img[alt="Stackfold"]').count()).toBe(0);
+            expect(consoleErrors).toEqual([]);
+            expect(requestsAfterLoad).toEqual([]);
+          } finally {
+            await browser.close();
+          }
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      60_000
+    );
+
+    it(
+      'appType: "standalone-html" — includeStackfoldIntro: true (the default) renders the Stackfold intro image, still with zero network requests after load',
+      async () => {
+        const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-tier5-standalone-html-intro-true-'));
+        try {
+          const projectDir = join(root, 'generated');
+
+          const init = await runStackfoldInit(projectDir, 'standalone-html', 30_000, { includeStackfoldIntro: 'true' });
+          expect(init.code, `stackfold init failed:\n${init.output}`).toBe(0);
+
+          const indexHtmlUrl = `file://${join(projectDir, 'index.html')}`;
+
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+
+            const consoleErrors: string[] = [];
+            page.on('console', (msg) => {
+              if (msg.type() === 'error') consoleErrors.push(msg.text());
+            });
+            page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+            let loaded = false;
+            const requestsAfterLoad: string[] = [];
+            page.on('request', (req) => {
+              if (loaded) requestsAfterLoad.push(req.url());
+            });
+
+            await page.goto(indexHtmlUrl, { waitUntil: 'load' });
+            loaded = true;
+
+            await page.waitForTimeout(500);
+
+            expect((await page.locator('h1').textContent())?.trim()).toBe(BASE_ANSWERS.appName);
+            const introImageSrc = await page.locator('img[alt="Stackfold"]').getAttribute('src');
+            expect(introImageSrc).toMatch(/^data:image\/webp;base64,/);
             expect(consoleErrors).toEqual([]);
             expect(requestsAfterLoad).toEqual([]);
           } finally {

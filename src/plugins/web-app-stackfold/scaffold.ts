@@ -95,6 +95,28 @@ const WHEN_SPA_VUE = { '==': [{ var: 'appType' }, 'spa-vue'] };
 const WHEN_STANDALONE = { '==': [{ var: 'appType' }, 'standalone-html'] };
 
 /**
+ * Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md §Step 1)
+ * — `includeStackfoldIntro`-derived gates, ANDed with each `appType` gate
+ * above, so only the "main display file" step of each of the 4 affected
+ * fragments switches between its `-intro`/bare sibling template; every
+ * other step in those fragments keeps using its plain `appType` `when`
+ * gate, unchanged. `and`/`!`/`var` are already supported by
+ * `JsonLogicExpressionEvaluator` (see `electron-stackfold/scaffold.ts`'s
+ * own `WHEN_SETTINGS_OR_SKINS` precedent) — no `core/` changes needed.
+ */
+const WHEN_INTRO = { var: 'includeStackfoldIntro' };
+const WHEN_NO_INTRO = { '!': WHEN_INTRO };
+
+const WHEN_STANDALONE_INTRO = { and: [WHEN_STANDALONE, WHEN_INTRO] };
+const WHEN_STANDALONE_BARE = { and: [WHEN_STANDALONE, WHEN_NO_INTRO] };
+const WHEN_SPA_REACT_INTRO = { and: [WHEN_SPA_REACT, WHEN_INTRO] };
+const WHEN_SPA_REACT_BARE = { and: [WHEN_SPA_REACT, WHEN_NO_INTRO] };
+const WHEN_SPA_VUE_INTRO = { and: [WHEN_SPA_VUE, WHEN_INTRO] };
+const WHEN_SPA_VUE_BARE = { and: [WHEN_SPA_VUE, WHEN_NO_INTRO] };
+const WHEN_SPA_VANILLA_INTRO = { and: [WHEN_SPA_VANILLA, WHEN_INTRO] };
+const WHEN_SPA_VANILLA_BARE = { and: [WHEN_SPA_VANILLA, WHEN_NO_INTRO] };
+
+/**
  * Task 044 (UX-001/SK-ADR-004, rollout table) — the case that motivated
  * SK-ADR-004: the entry point varies by `appType`, so it's a JSONLogic
  * conditional resolved inside `buildBlueprint()`, not a static plugin
@@ -118,14 +140,26 @@ const MAIN_FILE_BY_APP_TYPE = {
 // ---------------------------------------------------------------------------
 
 const baseTs = mountFragment(baseTsFragment, { when: WHEN_SPA }, { namespace: 'baseTs' });
-const viteReact = mountFragment(viteReactFragment, { when: WHEN_SPA_REACT }, { namespace: 'viteReact' });
-const viteVanilla = mountFragment(viteVanillaFragment, { when: WHEN_SPA_VANILLA }, { namespace: 'viteVanilla' });
-const viteVue = mountFragment(viteVueFragment, { when: WHEN_SPA_VUE }, { namespace: 'viteVue' });
+const viteReact = mountFragment(
+  viteReactFragment,
+  { when: WHEN_SPA_REACT, introWhen: WHEN_SPA_REACT_INTRO, bareWhen: WHEN_SPA_REACT_BARE },
+  { namespace: 'viteReact' }
+);
+const viteVanilla = mountFragment(
+  viteVanillaFragment,
+  { when: WHEN_SPA_VANILLA, introWhen: WHEN_SPA_VANILLA_INTRO, bareWhen: WHEN_SPA_VANILLA_BARE },
+  { namespace: 'viteVanilla' }
+);
+const viteVue = mountFragment(
+  viteVueFragment,
+  { when: WHEN_SPA_VUE, introWhen: WHEN_SPA_VUE_INTRO, bareWhen: WHEN_SPA_VUE_BARE },
+  { namespace: 'viteVue' }
+);
 const vitest = mountFragment(vitestFragment, { when: WHEN_SPA }, { namespace: 'vitest' });
 const eslint = mountFragment(eslintFragment, { when: WHEN_SPA }, { namespace: 'eslint' });
 const standaloneHtml = mountFragment(
   standaloneHtmlFragment,
-  { when: WHEN_STANDALONE },
+  { introWhen: WHEN_STANDALONE_INTRO, bareWhen: WHEN_STANDALONE_BARE },
   { namespace: 'standaloneHtml' }
 );
 
@@ -173,6 +207,19 @@ export default defineScaffold({
       type: 'select',
       choices: [...APP_TYPE_CHOICES],
       default: DEFAULT_APP_TYPE,
+    },
+    /**
+     * Task 050 — first `confirm` in the codebase defaulting to `true`
+     * (every other one — `includeSettings`/`includeSkins`/
+     * `includeAboutHelp` in `electron-stackfold`'s own scaffold.ts —
+     * defaults to `false`). Intentional, explicit product call: the intro
+     * block ships by default, opt-out rather than opt-in.
+     */
+    {
+      id: 'includeStackfoldIntro',
+      message: 'Include a short Stackfold intro on the main screen? (you can remove it anytime)',
+      type: 'confirm',
+      default: true,
     },
     ...composed.questions,
   ],

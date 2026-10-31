@@ -17,9 +17,18 @@ describe('web-app-stackfold — its own ScaffoldDefinition compiles (SK-ADR-003)
     expect(() => compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator())).not.toThrow();
   });
 
-  it('declares appName/description/author/appType, in that order', () => {
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md §Step 1)
+  // — `includeStackfoldIntro` is a new, root-level, pre-planned addition
+  // right after `appType`: 5 questions now, not 4.
+  it('declares appName/description/author/appType/includeStackfoldIntro, in that order', () => {
     const plugin = compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
-    expect(plugin.questions().map((q) => q.id)).toEqual(['appName', 'description', 'author', 'appType']);
+    expect(plugin.questions().map((q) => q.id)).toEqual([
+      'appName',
+      'description',
+      'author',
+      'appType',
+      'includeStackfoldIntro',
+    ]);
   });
 
   it('appType is a select question with the 4 expected choices, defaulting to spa-react', () => {

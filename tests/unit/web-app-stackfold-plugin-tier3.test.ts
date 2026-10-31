@@ -127,6 +127,79 @@ describe('web-app-stackfold plugin — generation integrity (tier 3: real emitte
     }
   }, 30_000);
 
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output.
+  it('appType: "spa-react" — includeStackfoldIntro: false produces a byte-identical src/App.tsx to today\'s (flag-omitted) output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-react-intro-false-'));
+    try {
+      const withFlagFalse = (
+        await buildBlueprintFor({ ...ANSWERS, appType: 'spa-react', includeStackfoldIntro: false })
+      ).files.find((f) => f.path === 'src/App.tsx')?.content.toString();
+      const flagOmitted = (await buildBlueprintFor({ ...ANSWERS, appType: 'spa-react' })).files
+        .find((f) => f.path === 'src/App.tsx')
+        ?.content.toString();
+      expect(withFlagFalse).toBe(flagOmitted);
+      expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it(
+    'appType: "spa-react" — includeStackfoldIntro: true (the default) scaffolds a src/App.tsx that still type-checks with tsc --noEmit and carries the intro block',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-react-intro-true-'));
+      try {
+        const projectDir = await scaffold({ ...ANSWERS, appType: 'spa-react', includeStackfoldIntro: true }, root);
+
+        const appTsxSrc = await readFile(join(projectDir, 'src/App.tsx'), 'utf8');
+        expect(appTsxSrc).toContain('data:image/webp;base64,');
+
+        const reactTypesPkg = requireFromHere.resolve('@types/react/package.json');
+        const reactDomTypesPkg = requireFromHere.resolve('@types/react-dom/package.json');
+        const nodeTypesPkg = requireFromHere.resolve('@types/node/package.json');
+        const reactTypesDir = dirname(reactTypesPkg);
+        const reactDomTypesDir = dirname(reactDomTypesPkg);
+        const vitestPkg = requireFromHere.resolve('vitest/package.json');
+        const testingLibraryReactPkg = requireFromHere.resolve('@testing-library/react/package.json');
+        const jestDomPkg = requireFromHere.resolve('@testing-library/jest-dom/package.json');
+
+        const config = join(root, 'tsconfig.typecheck.json');
+        await writeFile(
+          config,
+          JSON.stringify({
+            extends: posix(join(projectDir, 'tsconfig.json')),
+            compilerOptions: {
+              noEmit: true,
+              typeRoots: [
+                posix(dirname(dirname(reactTypesPkg))),
+                posix(dirname(dirname(reactDomTypesPkg))),
+                posix(dirname(dirname(nodeTypesPkg))),
+              ],
+              paths: {
+                react: [posix(join(reactTypesDir, 'index.d.ts'))],
+                'react/jsx-runtime': [posix(join(reactTypesDir, 'jsx-runtime.d.ts'))],
+                'react-dom/client': [posix(join(reactDomTypesDir, 'client.d.ts'))],
+                vitest: [posix(join(dirname(vitestPkg), 'dist', 'index.d.ts'))],
+                '@testing-library/react': [posix(join(dirname(testingLibraryReactPkg), 'types', 'index.d.ts'))],
+                '@testing-library/jest-dom/vitest': [posix(join(dirname(jestDomPkg), 'types', 'vitest.d.ts'))],
+              },
+            },
+            include: [posix(join(projectDir, 'src/**/*.ts')), posix(join(projectDir, 'src/**/*.tsx'))],
+          })
+        );
+
+        const result = await runTsc(tscBin, config);
+        expect(result.output, `tsc --noEmit failed:\n${result.output}`).toBe('');
+        expect(result.code).toBe(0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    30_000
+  );
+
   it(
     'appType: "spa-vue" — scaffolds into a real temp dir and type-checks the emitted .ts files with tsc --noEmit (App.vue itself is NOT type-checked — known gap, see file-level doc comment)',
     async () => {
@@ -166,12 +239,92 @@ describe('web-app-stackfold plugin — generation integrity (tier 3: real emitte
     30_000
   );
 
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output. No real tsc re-run
+  // here — App.vue itself is never type-checked by this tier anyway
+  // (known gap, see file-level doc comment above), so content-only
+  // assertions are enough.
+  it('appType: "spa-vue" — includeStackfoldIntro: false produces a byte-identical src/App.vue to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = (await buildBlueprintFor({ ...ANSWERS, appType: 'spa-vue', includeStackfoldIntro: false })).files
+      .find((f) => f.path === 'src/App.vue')
+      ?.content.toString();
+    const flagOmitted = (await buildBlueprintFor({ ...ANSWERS, appType: 'spa-vue' })).files
+      .find((f) => f.path === 'src/App.vue')
+      ?.content.toString();
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it('appType: "spa-vue" — includeStackfoldIntro: true (the default) includes the Stackfold intro block in src/App.vue', async () => {
+    const src = (await buildBlueprintFor({ ...ANSWERS, appType: 'spa-vue', includeStackfoldIntro: true })).files.find(
+      (f) => f.path === 'src/App.vue'
+    )?.content.toString();
+    expect(src).toContain('data:image/webp;base64,');
+    expect(src).toContain('<h1>{{ APP_NAME }}</h1>');
+  });
+
   it(
     'appType: "spa-vanilla" — scaffolds into a real temp dir and type-checks the emitted src/ with tsc --noEmit',
     async () => {
       const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-vanilla-'));
       try {
         const projectDir = await scaffold({ ...ANSWERS, appType: 'spa-vanilla' }, root);
+
+        const nodeTypesPkg = requireFromHere.resolve('@types/node/package.json');
+        const vitestPkg = requireFromHere.resolve('vitest/package.json');
+        const jestDomPkg = requireFromHere.resolve('@testing-library/jest-dom/package.json');
+
+        const config = join(root, 'tsconfig.typecheck.json');
+        await writeFile(
+          config,
+          JSON.stringify({
+            extends: posix(join(projectDir, 'tsconfig.json')),
+            compilerOptions: {
+              noEmit: true,
+              typeRoots: [posix(dirname(dirname(nodeTypesPkg)))],
+              paths: {
+                vitest: [posix(join(dirname(vitestPkg), 'dist', 'index.d.ts'))],
+                '@testing-library/jest-dom/vitest': [posix(join(dirname(jestDomPkg), 'types', 'vitest.d.ts'))],
+              },
+            },
+            include: [posix(join(projectDir, 'src/**/*.ts'))],
+          })
+        );
+
+        const result = await runTsc(tscBin, config);
+        expect(result.output, `tsc --noEmit failed:\n${result.output}`).toBe('');
+        expect(result.code).toBe(0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    30_000
+  );
+
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output.
+  it('appType: "spa-vanilla" — includeStackfoldIntro: false produces a byte-identical src/main.ts to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = (
+      await buildBlueprintFor({ ...ANSWERS, appType: 'spa-vanilla', includeStackfoldIntro: false })
+    ).files.find((f) => f.path === 'src/main.ts')?.content.toString();
+    const flagOmitted = (await buildBlueprintFor({ ...ANSWERS, appType: 'spa-vanilla' })).files.find(
+      (f) => f.path === 'src/main.ts'
+    )?.content.toString();
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it(
+    'appType: "spa-vanilla" — includeStackfoldIntro: true (the default) scaffolds a src/main.ts (its own independent renderApp()) that still type-checks with tsc --noEmit and carries the intro block',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-vanilla-intro-true-'));
+      try {
+        const projectDir = await scaffold({ ...ANSWERS, appType: 'spa-vanilla', includeStackfoldIntro: true }, root);
+
+        const mainTsSrc = await readFile(join(projectDir, 'src/main.ts'), 'utf8');
+        expect(mainTsSrc).toContain('data:image/webp;base64,');
 
         const nodeTypesPkg = requireFromHere.resolve('@types/node/package.json');
         const vitestPkg = requireFromHere.resolve('vitest/package.json');

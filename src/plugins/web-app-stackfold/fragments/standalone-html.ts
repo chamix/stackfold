@@ -16,8 +16,16 @@
  * comment) would leave `appName`/`description` completely unescaped,
  * silently reintroducing the Task 014 vulnerability.
  *
- * `props.when` (always `WHEN_STANDALONE` — see `../scaffold.ts`) gates the
- * one step: every other `appType` value never composes this fragment.
+ * `props.introWhen`/`props.bareWhen` (Task 050,
+ * .agents/specs/050-web-app-stackfold-intro-content.md §Step 1 —
+ * `WHEN_STANDALONE_INTRO`/`WHEN_STANDALONE_BARE` from `../scaffold.ts`)
+ * gate the fragment's one step, now split into two mutually-exclusive
+ * `writeFile` steps: the `-intro` template when `includeStackfoldIntro`
+ * is true, the original, byte-identical bare template otherwise. This
+ * fragment's entire content *is* the "main display file" (no other
+ * step to leave on a plain `appType`-only `when`), so its prop shape
+ * changes from a single `when` to this `introWhen`/`bareWhen` pair
+ * entirely.
  */
 import { step } from '../../../authoring/builder.js';
 import { loadTemplate } from '../../../authoring/templateLoader.js';
@@ -26,10 +34,13 @@ import type { Fragment, FragmentFactory } from '../../../authoring/fragment.js';
 const dir = import.meta.dirname;
 
 const INDEX_HTML_TEMPLATE = loadTemplate(dir, '../templates/standalone-html/index.html.hbs');
+const INDEX_HTML_INTRO_TEMPLATE = loadTemplate(dir, '../templates/standalone-html/index-intro.html.hbs');
 
 export interface StandaloneHtmlFragmentProps {
-  /** `WHEN_STANDALONE` from `../scaffold.ts` — true only when `appType === 'standalone-html'`. */
-  when: unknown;
+  /** `WHEN_STANDALONE_INTRO` from `../scaffold.ts` — true only when `appType === 'standalone-html'` and `includeStackfoldIntro` is true. */
+  introWhen: unknown;
+  /** `WHEN_STANDALONE_BARE` from `../scaffold.ts` — true only when `appType === 'standalone-html'` and `includeStackfoldIntro` is false. */
+  bareWhen: unknown;
 }
 
 // `step('writeFile', ...)` directly, not the `file()` sugar — `file()`
@@ -37,13 +48,21 @@ export interface StandaloneHtmlFragmentProps {
 // supports `strategy`/`jsonEscapeKeys`, not `htmlEscapeKeys`. Same
 // escape-hatch precedent `plugin-builder/scaffold.ts` already uses for
 // `jsEscapeKeys`.
-export const standaloneHtmlFragment: FragmentFactory<StandaloneHtmlFragmentProps> = ({ when }): Fragment => ({
+export const standaloneHtmlFragment: FragmentFactory<StandaloneHtmlFragmentProps> = ({
+  introWhen,
+  bareWhen,
+}): Fragment => ({
   questions: [],
   steps: [
     step(
       'writeFile',
+      { path: 'index.html', content: INDEX_HTML_INTRO_TEMPLATE, htmlEscapeKeys: ['appName', 'description'] },
+      { when: introWhen }
+    ),
+    step(
+      'writeFile',
       { path: 'index.html', content: INDEX_HTML_TEMPLATE, htmlEscapeKeys: ['appName', 'description'] },
-      { when }
+      { when: bareWhen }
     ),
   ],
 });

@@ -16,7 +16,13 @@
  * documented (JSX treats that slot as inert text, not parsed markup).
  *
  * `props.when` (always `WHEN_SPA_REACT` — see `../scaffold.ts`) gates
- * every step: active only when `appType === 'spa-react'`.
+ * every step: active only when `appType === 'spa-react'`. Task 050
+ * (.agents/specs/050-web-app-stackfold-intro-content.md §Step 1) adds
+ * `props.introWhen`/`props.bareWhen` (`WHEN_SPA_REACT_INTRO`/
+ * `WHEN_SPA_REACT_BARE`), used *only* on the `src/App.tsx` step — the
+ * "main display file" — which is split into two mutually-exclusive
+ * `writeFile` steps instead; every other step keeps using the plain
+ * `when` prop, unchanged.
  */
 import { file, npmInstall, step } from '../../../authoring/builder.js';
 import { loadTemplate } from '../../../authoring/templateLoader.js';
@@ -29,14 +35,23 @@ const VITE_CONFIG_TEMPLATE = loadTemplate(dir, '../templates/vite-react/vite.con
 const INDEX_HTML_TEMPLATE = loadTemplate(dir, '../templates/vite-react/index.html.hbs');
 const MAIN_TSX_TEMPLATE = loadTemplate(dir, '../templates/vite-react/main.tsx.hbs');
 const APP_TSX_TEMPLATE = loadTemplate(dir, '../templates/vite-react/App.tsx.hbs');
+const APP_TSX_INTRO_TEMPLATE = loadTemplate(dir, '../templates/vite-react/App-intro.tsx.hbs');
 const APP_TEST_TSX_TEMPLATE = loadTemplate(dir, '../templates/vite-react/App.test.tsx.hbs');
 
 export interface ViteReactFragmentProps {
   /** `WHEN_SPA_REACT` from `../scaffold.ts` — true only when `appType === 'spa-react'`. */
   when: unknown;
+  /** `WHEN_SPA_REACT_INTRO` from `../scaffold.ts` — true only when `appType === 'spa-react'` and `includeStackfoldIntro` is true. Used only on the `src/App.tsx` step. */
+  introWhen: unknown;
+  /** `WHEN_SPA_REACT_BARE` from `../scaffold.ts` — true only when `appType === 'spa-react'` and `includeStackfoldIntro` is false. Used only on the `src/App.tsx` step. */
+  bareWhen: unknown;
 }
 
-export const viteReactFragment: FragmentFactory<ViteReactFragmentProps> = ({ when }): Fragment => ({
+export const viteReactFragment: FragmentFactory<ViteReactFragmentProps> = ({
+  when,
+  introWhen,
+  bareWhen,
+}): Fragment => ({
   questions: [],
   steps: [
     file('package.json', PACKAGE_JSON_TEMPLATE, { strategy: 'json-merge', when }),
@@ -49,7 +64,8 @@ export const viteReactFragment: FragmentFactory<ViteReactFragmentProps> = ({ whe
       { when }
     ),
     file('src/main.tsx', MAIN_TSX_TEMPLATE, { when }),
-    file('src/App.tsx', APP_TSX_TEMPLATE, { jsonEscapeKeys: ['appName'], when }),
+    file('src/App.tsx', APP_TSX_INTRO_TEMPLATE, { jsonEscapeKeys: ['appName'], when: introWhen }),
+    file('src/App.tsx', APP_TSX_TEMPLATE, { jsonEscapeKeys: ['appName'], when: bareWhen }),
     file('src/App.test.tsx', APP_TEST_TSX_TEMPLATE, { when }),
     npmInstall({ when }),
   ],

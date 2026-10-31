@@ -97,5 +97,50 @@ describe.skipIf(!RUN_NETWORK_TESTS)(
       },
       10 * 60_000
     );
+
+    // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+    // §Step 1) — the opt-out intro block's safety net: `false` must be
+    // byte-identical to today's (flag-omitted) output.
+    it.each(APP_TYPES)(
+      'appType: "%s" — includeStackfoldIntro: false produces byte-identical scaffolded files to today\'s (flag-omitted) output',
+      async (appType) => {
+        const withFlagFalse = await buildBlueprintFor({ ...BASE_ANSWERS, appType, includeStackfoldIntro: false });
+        const flagOmitted = await buildBlueprintFor({ ...BASE_ANSWERS, appType });
+        expect(withFlagFalse.files.map((f) => ({ path: f.path, content: f.content.toString() }))).toEqual(
+          flagOmitted.files.map((f) => ({ path: f.path, content: f.content.toString() }))
+        );
+      }
+    );
+
+    it.each(APP_TYPES)(
+      'appType: "%s" — includeStackfoldIntro: true (the default) still succeeds through npm install + npm run build + npm run test, with the intro block present',
+      async (appType) => {
+        const root = await mkdtemp(join(tmpdir(), `stackfold-web-app-stackfold-e2e-intro-${appType}-`));
+        try {
+          const projectDir = join(root, 'generated');
+          const writer = new NodeFileWriter();
+          await writer.ensureEmptyDir(projectDir);
+          const blueprint = await buildBlueprintFor({ ...BASE_ANSWERS, appType, includeStackfoldIntro: true });
+          const mainDisplayPath = appType === 'spa-react' ? 'src/App.tsx' : appType === 'spa-vue' ? 'src/App.vue' : 'src/main.ts';
+          const mainDisplayContent = blueprint.files.find((f) => f.path === mainDisplayPath)?.content.toString();
+          expect(mainDisplayContent).toContain('data:image/webp;base64,');
+          for (const file of blueprint.files) {
+            await writer.writeFile(join(projectDir, file.path), file.content);
+          }
+
+          const install = await execNpm(['install', '--no-audit', '--no-fund'], projectDir, 8 * 60_000);
+          expect(install.code, `npm install failed:\n${install.output}`).toBe(0);
+
+          const build = await execNpm(['run', 'build'], projectDir, 2 * 60_000);
+          expect(build.code, `npm run build failed:\n${build.output}`).toBe(0);
+
+          const unitTests = await execNpm(['test'], projectDir, 2 * 60_000);
+          expect(unitTests.code, `npm test failed:\n${unitTests.output}`).toBe(0);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      10 * 60_000
+    );
   }
 );
