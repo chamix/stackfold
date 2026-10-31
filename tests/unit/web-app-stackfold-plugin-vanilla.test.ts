@@ -165,6 +165,23 @@ describe('web-app-stackfold plugin — appType: "spa-vanilla" (composed blueprin
     expect(src).not.toContain('AUTHOR_MARKER');
     expect(src).not.toContain('child_process');
   });
+
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output. `src/main.ts` here
+  // is also the real entry point (renderApp()), not just markup.
+  it('includeStackfoldIntro: false produces a byte-identical src/main.ts to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = await fileContent({ ...ANSWERS, includeStackfoldIntro: false }, 'src/main.ts');
+    const flagOmitted = await fileContent(ANSWERS, 'src/main.ts');
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it('includeStackfoldIntro: true (the default) includes the Stackfold intro block in src/main.ts, via its own independent renderApp()', async () => {
+    const src = await fileContent({ ...ANSWERS, includeStackfoldIntro: true }, 'src/main.ts');
+    expect(src).toContain('data:image/webp;base64,');
+    expect(src).toContain('heading.textContent = APP_NAME;');
+  });
 });
 
 /**

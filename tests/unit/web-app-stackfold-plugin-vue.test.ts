@@ -142,6 +142,22 @@ describe('web-app-stackfold plugin — appType: "spa-vue" (composed blueprint)',
     expect(src).toContain(`const APP_NAME = ${JSON.stringify('a{b}c\\d')};`);
     expect(src).toContain('<h1>{{ APP_NAME }}</h1>');
   });
+
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output.
+  it('includeStackfoldIntro: false produces a byte-identical src/App.vue to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = await fileContent({ ...ANSWERS, includeStackfoldIntro: false }, 'src/App.vue');
+    const flagOmitted = await fileContent(ANSWERS, 'src/App.vue');
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it('includeStackfoldIntro: true (the default) includes the Stackfold intro block in src/App.vue', async () => {
+    const src = await fileContent({ ...ANSWERS, includeStackfoldIntro: true }, 'src/App.vue');
+    expect(src).toContain('data:image/webp;base64,');
+    expect(src).toContain('<h1>{{ APP_NAME }}</h1>');
+  });
 });
 
 /**

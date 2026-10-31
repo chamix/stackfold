@@ -79,7 +79,13 @@ describe('web-app-stackfold plugin — identity', () => {
 
 describe('web-app-stackfold plugin — questions()', () => {
   it('declares appName/description/author followed by a single appType select (Decision A option (c))', () => {
-    expect(plugin.questions().map((q) => q.id)).toEqual(['appName', 'description', 'author', 'appType']);
+    expect(plugin.questions().map((q) => q.id)).toEqual([
+      'appName',
+      'description',
+      'author',
+      'appType',
+      'includeStackfoldIntro',
+    ]);
   });
 
   it('appType is a select question with the 4 expected choices, defaulting to spa-react', () => {
@@ -236,6 +242,22 @@ describe('web-app-stackfold plugin — appType: "spa-react" (composed blueprint,
       }
     }
   });
+
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output.
+  it('includeStackfoldIntro: false produces a byte-identical src/App.tsx to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = await fileContent({ ...ANSWERS, includeStackfoldIntro: false }, 'src/App.tsx');
+    const flagOmitted = await fileContent(ANSWERS, 'src/App.tsx');
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it('includeStackfoldIntro: true (the default) includes the Stackfold intro block in src/App.tsx', async () => {
+    const src = await fileContent({ ...ANSWERS, includeStackfoldIntro: true }, 'src/App.tsx');
+    expect(src).toContain('data:image/webp;base64,');
+    expect(src).toContain('<h1>{APP_NAME}</h1>');
+  });
 });
 
 describe('web-app-stackfold plugin — appType: "standalone-html" (the degenerate case, formerly web-app-standalone-html)', () => {
@@ -284,6 +306,22 @@ describe('web-app-stackfold plugin — appType: "standalone-html" (the degenerat
     for (const leak of ['stackfold', '.agents', 'claude-blueprints']) {
       expect(html).not.toContain(leak);
     }
+  });
+
+  // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
+  // §Step 1) — the opt-out intro block's safety net: `false` must be
+  // byte-identical to today's (flag-omitted) output.
+  it('includeStackfoldIntro: false produces a byte-identical index.html to today\'s (flag-omitted) output', async () => {
+    const withFlagFalse = await fileContent({ ...BASE_STANDALONE, includeStackfoldIntro: false }, 'index.html');
+    const flagOmitted = await fileContent(BASE_STANDALONE, 'index.html');
+    expect(withFlagFalse).toBe(flagOmitted);
+    expect(withFlagFalse).not.toContain('data:image/webp;base64,');
+  });
+
+  it('includeStackfoldIntro: true (the default) includes the Stackfold intro block in index.html', async () => {
+    const html = await fileContent({ ...BASE_STANDALONE, includeStackfoldIntro: true }, 'index.html');
+    expect(html).toContain('data:image/webp;base64,');
+    expect(html).toContain('<title>My Cool App!</title>');
   });
 });
 
