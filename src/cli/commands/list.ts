@@ -17,14 +17,14 @@ export function registerListCommand(program: Command, deps: ListCommandDependenc
   program
     .command('list')
     .description('List available stackfold plugins')
-    .action(() => {
-      runList(deps);
+    .action(async () => {
+      await runList(deps);
     });
 }
 
-export function runList(deps: ListCommandDependencies): void {
+export async function runList(deps: ListCommandDependencies): Promise<void> {
   const { registry, stdout } = deps;
-  const plugins = registry.list();
+  const plugins = await registry.list();
 
   if (plugins.length === 0) {
     stdout('No plugins registered.');

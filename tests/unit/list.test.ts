@@ -14,14 +14,14 @@ function fakePlugin(id: string, description: string, help?: StackfoldPlugin['hel
 }
 
 describe('runList', () => {
-  it('lists every registered plugin as its own block, separated by a blank line', () => {
+  it('lists every registered plugin as its own block, separated by a blank line', async () => {
     const stdout: string[] = [];
     const registry: PluginRegistry = {
-      resolve: () => undefined,
-      list: () => [fakePlugin('fake', 'fake description'), fakePlugin('other', 'other description')],
+      resolve: async () => undefined,
+      list: async () => [fakePlugin('fake', 'fake description'), fakePlugin('other', 'other description')],
     };
 
-    runList({ registry, stdout: (l) => stdout.push(l) });
+    await runList({ registry, stdout: (l) => stdout.push(l) });
 
     expect(stdout).toEqual([
       'Available stacks:',
@@ -33,23 +33,23 @@ describe('runList', () => {
     ]);
   });
 
-  it('uses the display name from help.name when present', () => {
+  it('uses the display name from help.name when present', async () => {
     const stdout: string[] = [];
     const registry: PluginRegistry = {
-      resolve: () => undefined,
-      list: () => [fakePlugin('fake', 'fake description', { name: 'Fake Stack' })],
+      resolve: async () => undefined,
+      list: async () => [fakePlugin('fake', 'fake description', { name: 'Fake Stack' })],
     };
 
-    runList({ registry, stdout: (l) => stdout.push(l) });
+    await runList({ registry, stdout: (l) => stdout.push(l) });
 
     expect(stdout).toEqual(['Available stacks:', '  Fake Stack (fake)', '      fake description']);
   });
 
-  it('reports no plugins registered rather than an empty list', () => {
+  it('reports no plugins registered rather than an empty list', async () => {
     const stdout: string[] = [];
-    const registry: PluginRegistry = { resolve: () => undefined, list: () => [] };
+    const registry: PluginRegistry = { resolve: async () => undefined, list: async () => [] };
 
-    runList({ registry, stdout: (l) => stdout.push(l) });
+    await runList({ registry, stdout: (l) => stdout.push(l) });
 
     expect(stdout).toEqual(['No plugins registered.']);
   });

@@ -13,49 +13,49 @@ function fakePlugin(id: string): StackfoldPlugin {
 }
 
 describe('StaticPluginRegistry', () => {
-  it('implements the PluginRegistry port', () => {
+  it('implements the PluginRegistry port', async () => {
     const registry: PluginRegistry = new StaticPluginRegistry([fakePlugin('a')]);
-    expect(registry.resolve('a')?.id).toBe('a');
+    expect((await registry.resolve('a'))?.id).toBe('a');
   });
 
-  it('resolves a plugin by its stable id', () => {
+  it('resolves a plugin by its stable id', async () => {
     const a = fakePlugin('a');
     const b = fakePlugin('b');
     const registry = new StaticPluginRegistry([a, b]);
 
-    expect(registry.resolve('a')).toBe(a);
-    expect(registry.resolve('b')).toBe(b);
+    await expect(registry.resolve('a')).resolves.toBe(a);
+    await expect(registry.resolve('b')).resolves.toBe(b);
   });
 
-  it('returns undefined for an unknown id', () => {
+  it('returns undefined for an unknown id', async () => {
     const registry = new StaticPluginRegistry([fakePlugin('a')]);
-    expect(registry.resolve('nope')).toBeUndefined();
+    await expect(registry.resolve('nope')).resolves.toBeUndefined();
   });
 
   it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty'])(
     'does not resolve object-prototype key %j as a plugin',
-    (key) => {
+    async (key) => {
       const registry = new StaticPluginRegistry([fakePlugin('a')]);
-      expect(registry.resolve(key)).toBeUndefined();
+      await expect(registry.resolve(key)).resolves.toBeUndefined();
     }
   );
 
-  it('lists plugins in registration order', () => {
+  it('lists plugins in registration order', async () => {
     const registry = new StaticPluginRegistry([fakePlugin('b'), fakePlugin('a')]);
-    expect(registry.list().map((p) => p.id)).toEqual(['b', 'a']);
+    expect((await registry.list()).map((p) => p.id)).toEqual(['b', 'a']);
   });
 
-  it('returns a defensive copy from list()', () => {
+  it('returns a defensive copy from list()', async () => {
     const registry = new StaticPluginRegistry([fakePlugin('a')]);
-    registry.list().push(fakePlugin('evil'));
-    expect(registry.list().map((p) => p.id)).toEqual(['a']);
+    (await registry.list()).push(fakePlugin('evil'));
+    expect((await registry.list()).map((p) => p.id)).toEqual(['a']);
   });
 
-  it('is not affected by later mutation of the array it was built from', () => {
+  it('is not affected by later mutation of the array it was built from', async () => {
     const plugins = [fakePlugin('a')];
     const registry = new StaticPluginRegistry(plugins);
     plugins.push(fakePlugin('b'));
-    expect(registry.resolve('b')).toBeUndefined();
+    await expect(registry.resolve('b')).resolves.toBeUndefined();
   });
 
   it('rejects two plugins with the same id', () => {

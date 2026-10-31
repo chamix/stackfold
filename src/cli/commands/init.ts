@@ -89,14 +89,14 @@ export async function runInit(
 
   if (!stack) {
     stderr('stackfold init: no stack specified. Usage: stackfold init <stack> <directory>');
-    printAvailable(registry, stderr);
+    await printAvailable(registry, stderr);
     return 1;
   }
 
-  const plugin = registry.resolve(stack);
+  const plugin = await registry.resolve(stack);
   if (!plugin) {
     stderr(`stackfold init: unknown stack "${stack}".`);
-    printAvailable(registry, stderr);
+    await printAvailable(registry, stderr);
     return 1;
   }
 
@@ -229,9 +229,9 @@ function coerceAnswerValue(raw: string): AnswerValue {
   return raw;
 }
 
-function printAvailable(registry: PluginRegistry, write: (line: string) => void): void {
+async function printAvailable(registry: PluginRegistry, write: (line: string) => void): Promise<void> {
   write('Available stacks:');
-  registry.list().forEach((p, index) => {
+  (await registry.list()).forEach((p, index) => {
     if (index > 0) write('');
     for (const line of formatPluginListEntry(p)) write(`  ${line}`);
   });

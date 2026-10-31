@@ -69,9 +69,20 @@ export interface ProcessRunner {
   run(command: string, args: string[], options?: { cwd?: string }): Promise<void>;
 }
 
+/**
+ * Async since Task 049 / SK-ADR-005 (ARCH-002) — the first change to
+ * `core/` since ARCH-001. A truly lazy `DynamicPluginRegistry`
+ * (`infra/dynamicPluginRegistry.ts`) needs to import/compile an external
+ * plugin's source on demand, which is unavoidably asynchronous; wrapping
+ * that in a synchronous-looking port would mean either eager-loading
+ * everything up front (no real laziness) or a separate, non-uniform
+ * "preload" step. `StaticPluginRegistry` (`infra/pluginLoader.ts`) adapts
+ * trivially — it wraps its already-in-memory values in
+ * `Promise.resolve(...)`, zero behavior change for built-ins.
+ */
 export interface PluginRegistry {
-  resolve(id: string): StackfoldPlugin | undefined;
-  list(): StackfoldPlugin[];
+  resolve(id: string): Promise<StackfoldPlugin | undefined>;
+  list(): Promise<StackfoldPlugin[]>;
 }
 
 /**

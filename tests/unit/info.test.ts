@@ -14,26 +14,29 @@ function fakePlugin(id: string, description: string, help?: StackfoldPlugin['hel
 }
 
 describe('runInfo', () => {
-  it('prints the resolved plugin\'s formatted info and returns 0', () => {
+  it('prints the resolved plugin\'s formatted info and returns 0', async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const plugin = fakePlugin('fake', 'fake description', { name: 'Fake Stack', details: 'More prose.' });
-    const registry: PluginRegistry = { resolve: (id) => (id === 'fake' ? plugin : undefined), list: () => [plugin] };
+    const registry: PluginRegistry = {
+      resolve: async (id) => (id === 'fake' ? plugin : undefined),
+      list: async () => [plugin],
+    };
 
-    const code = runInfo('fake', { registry, stdout: (l) => stdout.push(l), stderr: (l) => stderr.push(l) });
+    const code = await runInfo('fake', { registry, stdout: (l) => stdout.push(l), stderr: (l) => stderr.push(l) });
 
     expect(code).toBe(0);
     expect(stdout).toEqual(['Fake Stack (fake)', 'fake description', '', 'More prose.']);
     expect(stderr).toEqual([]);
   });
 
-  it('reports an unknown stack on stderr, lists available stacks, and returns 1', () => {
+  it('reports an unknown stack on stderr, lists available stacks, and returns 1', async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const plugin = fakePlugin('fake', 'fake description');
-    const registry: PluginRegistry = { resolve: () => undefined, list: () => [plugin] };
+    const registry: PluginRegistry = { resolve: async () => undefined, list: async () => [plugin] };
 
-    const code = runInfo('rails', { registry, stdout: (l) => stdout.push(l), stderr: (l) => stderr.push(l) });
+    const code = await runInfo('rails', { registry, stdout: (l) => stdout.push(l), stderr: (l) => stderr.push(l) });
 
     expect(code).toBe(1);
     expect(stdout).toEqual([]);

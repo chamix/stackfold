@@ -18,20 +18,20 @@ export function registerInfoCommand(program: Command, deps: InfoCommandDependenc
     .command('info')
     .description("Show a stackfold plugin's detailed help")
     .argument('<stack>', 'Plugin/stack id, e.g. "electron-ts"')
-    .action((stack: string) => {
-      process.exitCode = runInfo(stack, deps);
+    .action(async (stack: string) => {
+      process.exitCode = await runInfo(stack, deps);
     });
 }
 
 /** Returns the process exit code; never throws. */
-export function runInfo(stack: string, deps: InfoCommandDependencies): number {
+export async function runInfo(stack: string, deps: InfoCommandDependencies): Promise<number> {
   const { registry, stdout, stderr } = deps;
 
-  const plugin = registry.resolve(stack);
+  const plugin = await registry.resolve(stack);
   if (!plugin) {
     stderr(`stackfold info: unknown stack "${stack}".`);
     stderr('Available stacks:');
-    registry.list().forEach((p, index) => {
+    (await registry.list()).forEach((p, index) => {
       if (index > 0) stderr('');
       for (const line of formatPluginListEntry(p)) stderr(`  ${line}`);
     });

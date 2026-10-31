@@ -10,7 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { registerInfoCommand } from './commands/info.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerListCommand } from './commands/list.js';
+import { registerPluginCommand } from './commands/plugin.js';
 import { registerScaffoldSynthCommand } from './commands/scaffoldSynth.js';
+import { CompositePluginRegistry } from '../infra/compositePluginRegistry.js';
+import { DynamicPluginRegistry } from '../infra/dynamicPluginRegistry.js';
 import { NodeFileWriter } from '../infra/fs.js';
 import { NativeOpener } from '../infra/open.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
@@ -40,7 +43,7 @@ import { electronTsPlugin } from '../plugins/electron-ts/index.js';
  */
 const expressionEvaluator = new JsonLogicExpressionEvaluator();
 
-const registry = new StaticPluginRegistry([
+const staticRegistry = new StaticPluginRegistry([
   electronTsPlugin,
   compileScaffold(
     (await import('../plugins/electron-stackfold/scaffold.json', { with: { type: 'json' } })).default as ScaffoldDefinition,
@@ -55,6 +58,25 @@ const registry = new StaticPluginRegistry([
   compileScaffold((await import('../plugins/web-app-stackfold/scaffold.js')).default, expressionEvaluator),
   // stackfold-plugin-registry:end
 ]);
+
+/**
+ * Task 049/SK-ADR-005 (ARCH-002): every CLI command below now receives this
+ * composite, not the raw `StaticPluginRegistry` — built-ins plus whatever
+ * the user registered externally via `stackfold plugin register`, with
+ * built-ins always winning an id collision (`CompositePluginRegistry`'s own
+ * header comment). `list.ts`/`info.ts`/`init.ts` never know the difference;
+ * `plugin.ts`'s own `register`/`unregister`/`list` subcommands talk to the
+ * `DynamicPluginRegistry`'s config-handling helpers directly, not through
+ * this composite.
+ */
+const dynamicRegistry = new DynamicPluginRegistry({
+  evaluator: expressionEvaluator,
+  cwd: () => process.cwd(),
+  stderr: (line) => console.error(line),
+});
+const registry = new CompositePluginRegistry([staticRegistry, dynamicRegistry], {
+  stderr: (line) => console.error(line),
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { version } = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8')) as { version: string };
@@ -94,6 +116,13 @@ registerScaffoldSynthCommand(program, {
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),
   cwd: () => process.cwd(),
+});
+
+registerPluginCommand(program, {
+  cwd: () => process.cwd(),
+  stdout: (line) => console.log(line),
+  stderr: (line) => console.error(line),
+  evaluator: expressionEvaluator,
 });
 
 await program.parseAsync();

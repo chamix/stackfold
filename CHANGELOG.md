@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **External plugin registration** (Task 049, ARCH-002/SK-ADR-005):
+  `stackfold plugin register <source> [--project]` / `unregister <id>
+  [--project]` / `list` — register a local `scaffold.json`/`scaffold.js`,
+  or an installed npm package, without touching `stackfold`'s own source.
+  `PluginRegistry` (`core/ports.ts`) is now async
+  (`resolve()`/`list()` return `Promise`s) — the first change to `core/`
+  since ARCH-001 — enabling a genuinely lazy `DynamicPluginRegistry`
+  (`infra/dynamicPluginRegistry.ts`): `stackfold init <id>` only ever
+  imports the one external plugin it was asked for, never any other
+  registered one. Config lives at two cosmiconfig-based levels — global
+  (`~/.stackfoldrc.json`) and project (upward `cosmiconfig.search()`),
+  project wins on a same-id collision. A new `CompositePluginRegistry`
+  (`infra/compositePluginRegistry.ts`) composes the existing
+  `StaticPluginRegistry` (built-ins) with the new dynamic one: a built-in
+  always wins an id collision against an external plugin (silently in
+  `resolve()`, with a stderr warning in `list()`), and a broken external
+  entry (deleted file, uninstalled package, failed smoke test) is omitted
+  with a warning rather than breaking `list`/`init` for everyone else.
+  `register` runs the same shape-check + smoke-test validation
+  (`compileScaffold()` + a `questions()`/`buildBlueprint()` dry run with
+  synthesized answers) before writing anything, and records the plugin's
+  own real id — never a user-chosen label. A `.ts`/`.tsx` source is
+  rejected outright ("run `stackfold scaffold synth <dir>` first" —
+  SK-ADR-003: TS stays authoring-time only). `cli/index.ts`'s composition
+  root now wires `CompositePluginRegistry` into `init`/`list`/`info`
+  instead of the raw `StaticPluginRegistry`; no new production
+  dependency (`cosmiconfig` was already one, under its own
+  `'stackfold-plugins'` namespace, distinct from `init.ts`'s unrelated
+  `'stackfold'`-namespaced `--config` usage).
 - **Post-`init` "open the project" prompt** (Task 044, UX-001): after a
   successful, interactive `stackfold init`, a new `select` prompt offers
   "Open folder" / "Open main file" (only when the plugin declares one) /
