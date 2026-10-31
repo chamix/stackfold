@@ -65,9 +65,9 @@ describe('electron-ts plugin — identity', () => {
     expect(electronTsPlugin.description.length).toBeGreaterThan(0);
   });
 
-  it('is resolvable through a registry by its id', () => {
+  it('is resolvable through a registry by its id', async () => {
     const registry = new StaticPluginRegistry([electronTsPlugin]);
-    expect(registry.resolve('electron-ts')).toBe(electronTsPlugin);
+    await expect(registry.resolve('electron-ts')).resolves.toBe(electronTsPlugin);
   });
 
   it('the default export and the factory produce the same questions', () => {

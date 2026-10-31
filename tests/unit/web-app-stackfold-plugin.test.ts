@@ -71,9 +71,9 @@ describe('web-app-stackfold plugin — identity', () => {
     expect(plugin.description.length).toBeGreaterThan(0);
   });
 
-  it('is resolvable through a registry by its id, independent of any other plugin', () => {
+  it('is resolvable through a registry by its id, independent of any other plugin', async () => {
     const registry = new StaticPluginRegistry([plugin]);
-    expect(registry.resolve('web-app-stackfold')).toBe(plugin);
+    await expect(registry.resolve('web-app-stackfold')).resolves.toBe(plugin);
   });
 });
 

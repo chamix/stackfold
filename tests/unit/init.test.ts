@@ -72,8 +72,8 @@ function setup(opts: {
     fakePlugin('other', DEFAULT_BLUEPRINT),
   ];
   const registry: PluginRegistry = {
-    resolve: (id) => plugins.find((p) => p.id === id),
-    list: () => [...plugins],
+    resolve: async (id) => plugins.find((p) => p.id === id),
+    list: async () => [...plugins],
   };
 
   const deps: InitCommandDependencies = {
