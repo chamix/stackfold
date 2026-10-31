@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-31
 
 ### Added
 
@@ -283,7 +283,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `help.details`: they're dev-lifecycle artifacts tracked in `.agents/`
   and on GitHub, with no value to someone just picking a stack.
 
+### Removed
+
+- **`web-app-spa` and `web-app-standalone-html` plugins** — merged into
+  the single `web-app-stackfold` plugin (see Added, above). Running
+  `stackfold init web-app-spa` or
+  `stackfold init web-app-standalone-html` now fails with "unknown
+  stack". **This is the sole reason this release is `2.0.0`** rather
+  than a `1.x` minor — everything else in this release is additive or
+  an internal fix. Migration:
+  - `stackfold init web-app-standalone-html` →
+    `stackfold init web-app-stackfold --answer appType=standalone-html`
+  - `stackfold init web-app-spa` (React) →
+    `stackfold init web-app-stackfold --answer appType=spa-react`
+  - `stackfold init web-app-spa` (Vue) →
+    `stackfold init web-app-stackfold --answer appType=spa-vue`
+  - `stackfold init web-app-spa` (vanilla) →
+    `stackfold init web-app-stackfold --answer appType=spa-vanilla`
+
 ### Fixed
+
+- **`package.json`'s `main` field** pointed at
+  `./dist/core/index.js`, a file that has never existed (there is no
+  `core/index.ts`) — dropped. `stackfold` is consumed via its `bin`
+  entry, never as a library import, so no replacement entry point is
+  needed.
+- **Stale build output in `dist/`**: `tsc` never cleans its own output
+  directory, so compiled artifacts from the now-removed `web-app`
+  plugin (and other deleted sources) were still being packed into the
+  npm tarball. Cleaned before cutting this release.
 
 - **`mountFragment()`'s rewrite engine** (Task 047) now also renames
   local-id references inside `writeFile`'s
