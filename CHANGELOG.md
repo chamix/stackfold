@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-11-01
+
+### Fixed
+
+- **PKG-001**: `tsx` was listed only in `devDependencies`, so a plain
+  `npm install stackfold` crashed on the very first command (even
+  `--help`) with `ERR_MODULE_NOT_FOUND: Cannot find package 'tsx'`,
+  because `dist/cli/commands/scaffoldSynth.js` imported it
+  unconditionally and that module is wired eagerly into the CLI at
+  startup. Moved `tsx` to `dependencies`, and converted the import into
+  a dynamic `import('tsx/esm/api')` inside `scaffold synth`'s own
+  execution path, so loading the CLI for any other command never pulls
+  `tsx` in at all. Release-blocking — affected 100% of real-world
+  `2.1.0` installs.
+
 ## [2.1.0] - 2026-11-01
 
 ### Added
