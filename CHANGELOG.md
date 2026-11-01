@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-01
+
+### Added
+
+- **Optional Stackfold intro on `web-app-stackfold`'s main screen** (Task
+  050): a new `includeStackfoldIntro` confirm question — default
+  **true**, opt-out rather than opt-in — adds a short intro block (logo
+  image + a line crediting Stackfold) to the generated main file. Ships
+  as new `*-intro.*.hbs` templates across all 4 `appType`s; the existing
+  bare templates stay byte-identical when declined.
+
+### Fixed
+
+- **UX-004**: `web-app-stackfold` was missing a favicon in all 4
+  `appType`s (404, no `<link rel="icon">`) — added an inline SVG
+  favicon, no binary asset. The intro image also rendered at native/huge
+  size — resized to 96px.
+- Corrected malformed base64 in the intro image data-URI across all 4
+  intro templates (a formatting bug introduced in Task 050, found after
+  merge).
+- Hardened the tier-5 Playwright e2e test's vite-preview process cleanup
+  on Windows.
+
+### Changed
+
+- Added a Playwright-based tier-5 e2e playground with its own runner
+  (test infra only — no change to generated output).
+
 ## [2.0.0] - 2026-10-31
 
 ### Added
