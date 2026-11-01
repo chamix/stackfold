@@ -1,0 +1,20 @@
+import { describe, expect, it } from 'vitest';
+import definition from './scaffold.js';
+
+// Deliberately does not import `compileScaffold()`/`JsonLogicExpressionEvaluator`
+// from `stackfold` itself (ARCH-003 Decision 2) — neither is part of the
+// published `"stackfold/authoring"` surface, so this generated test sticks
+// to a plain shape check an external author can run with nothing beyond
+// `vitest` installed locally, instead of reaching into stackfold's own
+// internals.
+describe('{{pluginId}} — generated ScaffoldDefinition', () => {
+  it('exports a ScaffoldDefinition-shaped object with the expected id', async () => {
+    const resolved =
+      typeof definition === 'function' ? await (definition as () => unknown | Promise<unknown>)() : (definition as unknown);
+    const parsed = resolved as { id: string; description: string; steps: unknown[] };
+
+    expect(parsed.id).toBe('{{pluginId}}');
+    expect(typeof parsed.description).toBe('string');
+    expect(Array.isArray(parsed.steps)).toBe(true);
+  });
+});

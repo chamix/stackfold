@@ -58,39 +58,23 @@
  * never leaves `src/cli/index.ts` patched to import a `scaffold.json` that
  * was never written — no new error-handling code, per D-C.
  *
- * `pluginIdSchema` below is a new, kebab-case zod schema, in the same
- * style as `core/validation.ts`'s `appNameSchema` — defined locally rather
- * than added to `core/validation.ts` itself, which is outside this task's
- * declared scope (.agents/current_scope.json); this keeps the *convention*
- * shared without requiring an edit to a file this task was not authorized
- * to touch.
+ * `pluginIdSchema` is now hoisted into `core/validation.ts` (ARCH-003
+ * Decision 2 — `src/plugins/plugin-scaffold/scaffold.ts` needed the exact
+ * same kebab-case plugin-id validation as a second consumer), re-exported
+ * from here unchanged so existing imports (e.g.
+ * `tests/unit/plugin-builder.test.ts`'s `import { pluginIdSchema } from
+ * '.../plugin-builder/scaffold.js'`) keep working.
  */
-import { z } from 'zod';
 import { defineScaffold, step } from '../../authoring/builder.js';
 import { loadTemplate } from '../../authoring/templateLoader.js';
-import { authorSchema, descriptionSchema, toValidate } from '../../core/validation.js';
+import { authorSchema, descriptionSchema, pluginIdSchema, toValidate } from '../../core/validation.js';
+
+export { pluginIdSchema };
 
 export const DEFAULT_PLUGIN_ID = 'my-plugin';
 export const DEFAULT_DISPLAY_NAME = 'My Plugin';
 export const DEFAULT_PLUGIN_DESCRIPTION = 'A stackfold plugin.';
 export const DEFAULT_AUTHOR = '';
-
-/**
- * Kebab-case: lowercase letters/digits, single hyphens, starting with a
- * letter — same convention/style as `core/validation.ts`'s `appNameSchema`
- * (trim, bounded length, a `refine` with a clear message), not a parallel
- * validation scheme. See this module's header comment for why this lives
- * here instead of in `core/validation.ts`.
- */
-export const pluginIdSchema = z
-  .string()
-  .trim()
-  .min(1, 'Plugin id must not be empty.')
-  .max(100, 'Plugin id must be 100 characters or fewer.')
-  .refine(
-    (v) => /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(v),
-    'Plugin id must be kebab-case: lowercase letters/digits, single hyphens, starting with a letter.'
-  );
 
 /**
  * The 3 sibling `.hbs` templates loaded here, once, at module-evaluation
@@ -125,7 +109,8 @@ export default defineScaffold({
       'Generates a new stackfold plugin as a TS-authored scaffold.ts + sibling .hbs templates under ' +
       'src/plugins/<pluginId>/, synthesizes its canonical scaffold.json via a real `stackfold scaffold ' +
       'synth` invocation, and registers it into src/cli/index.ts via the patchFile hook action. Run from ' +
-      'the root of a stackfold checkout.',
+      'the root of a stackfold checkout. For a standalone plugin that needs no checkout, use ' +
+      '`plugin-scaffold` instead.',
   },
 
   questions: [

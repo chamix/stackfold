@@ -50,6 +50,11 @@ const staticRegistry = new StaticPluginRegistry([
     expressionEvaluator
   ),
   compileScaffold((await import('../plugins/plugin-builder/scaffold.js')).default, expressionEvaluator),
+  // plugin-scaffold (ARCH-003 Decision 3) — same reason as plugin-builder
+  // above: its questions carry `validate: toValidate(...)` closures, so it
+  // must compile from its own `scaffold.js`, never the synth-verified
+  // `scaffold.json` committed alongside it.
+  compileScaffold((await import('../plugins/plugin-scaffold/scaffold.js')).default, expressionEvaluator),
   // web-app-stackfold (Task 043) compiles from its own `scaffold.js`, not
   // `scaffold.json` — same reason as `plugin-builder` above: its
   // `appName`/`description`/`author` questions carry `validate: toValidate(...)`
@@ -115,7 +120,6 @@ registerInfoCommand(program, {
 registerScaffoldSynthCommand(program, {
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),
-  cwd: () => process.cwd(),
 });
 
 registerPluginCommand(program, {

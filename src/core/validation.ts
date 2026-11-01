@@ -42,6 +42,25 @@ export const authorSchema = z
   .refine((v) => !v.includes('\n'), 'Author must be a single line.');
 
 /**
+ * Kebab-case: lowercase letters/digits, single hyphens, starting with a
+ * letter. Hoisted here from `src/plugins/plugin-builder/scaffold.ts`
+ * (ARCH-003 Decision 2) once a second consumer
+ * (`src/plugins/plugin-scaffold/scaffold.ts`) needed the exact same
+ * plugin-id validation — same convention/style as `appNameSchema` above
+ * (trim, bounded length, a `refine` with a clear message), not a parallel
+ * validation scheme.
+ */
+export const pluginIdSchema = z
+  .string()
+  .trim()
+  .min(1, 'Plugin id must not be empty.')
+  .max(100, 'Plugin id must be 100 characters or fewer.')
+  .refine(
+    (v) => /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(v),
+    'Plugin id must be kebab-case: lowercase letters/digits, single hyphens, starting with a letter.'
+  );
+
+/**
  * Adapts a zod string schema into the `(value: unknown) => true | string`
  * shape `QuestionDefinition.validate` expects (`core/types.ts`) — zod is
  * an implementation detail behind that existing seam, not a new port.

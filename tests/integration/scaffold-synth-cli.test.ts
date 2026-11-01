@@ -14,14 +14,15 @@ const TEMPLATE_LOADER_URL = pathToFileURL(join(REPO_ROOT, 'src/authoring/templat
 
 let root: string;
 let pluginDir: string;
-let outputRoot: string;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'stackfold-scaffold-synth-cli-'));
+  // ARCH-003 Decision 1: `outDir` is derived from `pluginDir` itself (the
+  // directory containing the `scaffold.ts` being compiled), never from an
+  // injected/unrelated cwd — deliberately NOT named "output" anymore,
+  // since there is no separate output root distinct from `pluginDir`.
   pluginDir = join(root, 'author');
-  outputRoot = join(root, 'output');
   await mkdir(pluginDir, { recursive: true });
-  await mkdir(outputRoot, { recursive: true });
 
   // A governing package.json declaring "type": "module" — the same
   // condition every real `src/plugins/<id>/` directory already inherits
@@ -40,7 +41,6 @@ function makeDeps(): ScaffoldSynthCommandDependencies & { stdoutLines: string[];
   return {
     stdout: (line) => stdoutLines.push(line),
     stderr: (line) => stderrLines.push(line),
-    cwd: () => outputRoot,
     stdoutLines,
     stderrLines,
   };
@@ -76,7 +76,7 @@ export default defineScaffold({
     expect(deps.stderrLines).toEqual([]);
     expect(code).toBe(0);
 
-    const outputPath = join(outputRoot, 'src', 'plugins', 'synth-cli-fixture', 'scaffold.json');
+    const outputPath = join(pluginDir, 'scaffold.json');
     const raw = await readFile(outputPath, 'utf8');
     const parsed = JSON.parse(raw) as ScaffoldDefinition;
 
@@ -116,7 +116,7 @@ export default function build() {
     const code = await runScaffoldSynth(pluginDir, deps);
 
     expect(code).toBe(0);
-    const outputPath = join(outputRoot, 'src', 'plugins', 'synth-cli-thunk-fixture', 'scaffold.json');
+    const outputPath = join(pluginDir, 'scaffold.json');
     const parsed = JSON.parse(await readFile(outputPath, 'utf8')) as ScaffoldDefinition;
     expect(parsed.steps).toEqual([{ action: 'gitInit', params: {} }]);
   });
@@ -140,7 +140,7 @@ export const scaffold = defineScaffold({
     const code = await runScaffoldSynth(pluginDir, deps);
 
     expect(code).toBe(0);
-    const outputPath = join(outputRoot, 'src', 'plugins', 'synth-cli-named-export-fixture', 'scaffold.json');
+    const outputPath = join(pluginDir, 'scaffold.json');
     const parsed = JSON.parse(await readFile(outputPath, 'utf8')) as ScaffoldDefinition;
     expect(parsed.steps).toEqual([{ action: 'npmInstall', params: {} }]);
   });
@@ -163,7 +163,7 @@ export const scaffold = defineScaffold({
 
     expect(code).toBe(1);
     expect(deps.stderrLines.length).toBeGreaterThan(0);
-    await expect(stat(join(outputRoot, 'src', 'plugins'))).rejects.toThrow();
+    await expect(stat(join(pluginDir, 'scaffold.json'))).rejects.toThrow();
   });
 
   it('exits 1 and writes nothing when the smoke test fails (unknown action)', async () => {
@@ -184,7 +184,7 @@ export const scaffold = defineScaffold({
 
     expect(code).toBe(1);
     expect(deps.stderrLines.join('\n')).toMatch(/thisActionDoesNotExist|smoke test/);
-    await expect(stat(join(outputRoot, 'src', 'plugins'))).rejects.toThrow();
+    await expect(stat(join(pluginDir, 'scaffold.json'))).rejects.toThrow();
   });
 
   it('exits 1 with a clear error when scaffold.ts does not exist', async () => {

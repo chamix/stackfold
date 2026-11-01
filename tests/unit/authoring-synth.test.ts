@@ -75,15 +75,23 @@ describe('scaffoldDefinitionSchema', () => {
 });
 
 describe('synth', () => {
-  it('writes a well-formed definition to src/plugins/<id>/scaffold.json under cwd', () => {
-    const result = synth(VALID_DEFINITION, { cwd: root });
+  // ARCH-003 Decision 1 regression guard: `plugin-builder`'s own invocation
+  // (`scaffold synth src/plugins/<pluginId>`) resolves `outDir` to exactly
+  // `src/plugins/<pluginId>`, so passing that same nested path as `outDir`
+  // here must still produce the byte-identical final path the old,
+  // hardcoded `resolve(cwd, 'src', 'plugins', <id>, 'scaffold.json')`
+  // convention always did.
+  const pluginOutDir = () => join(root, 'src', 'plugins', 'fixture-plugin');
 
-    const expectedPath = join(root, 'src', 'plugins', 'fixture-plugin', 'scaffold.json');
+  it('writes a well-formed definition to scaffold.json inside outDir', () => {
+    const result = synth(VALID_DEFINITION, { outDir: pluginOutDir() });
+
+    const expectedPath = join(pluginOutDir(), 'scaffold.json');
     expect(result.outputPath).toBe(expectedPath);
   });
 
   it('the written file is valid, formatted JSON matching the definition exactly', async () => {
-    const result = synth(VALID_DEFINITION, { cwd: root });
+    const result = synth(VALID_DEFINITION, { outDir: pluginOutDir() });
 
     const raw = await readFile(result.outputPath, 'utf8');
     expect(JSON.parse(raw)).toEqual(VALID_DEFINITION);
@@ -92,7 +100,7 @@ describe('synth', () => {
   });
 
   it('the written scaffold.json is itself consumable by compileScaffold() directly', async () => {
-    const result = synth(VALID_DEFINITION, { cwd: root });
+    const result = synth(VALID_DEFINITION, { outDir: pluginOutDir() });
     const raw = await readFile(result.outputPath, 'utf8');
     const parsed = JSON.parse(raw) as ScaffoldDefinition;
 
@@ -104,10 +112,9 @@ describe('synth', () => {
   it('throws on structural validation failure and never writes any file', async () => {
     const invalid = { ...VALID_DEFINITION, steps: 'not-an-array' } as unknown as ScaffoldDefinition;
 
-    expect(() => synth(invalid, { cwd: root })).toThrow();
+    expect(() => synth(invalid, { outDir: pluginOutDir() })).toThrow();
 
-    const outputDir = join(root, 'src', 'plugins', 'fixture-plugin');
-    await expect(stat(outputDir)).rejects.toThrow();
+    await expect(stat(pluginOutDir())).rejects.toThrow();
   });
 
   it('throws when compileScaffold() smoke test fails (unknown action) and never writes any file', async () => {
@@ -116,40 +123,38 @@ describe('synth', () => {
       steps: [{ action: 'thisActionDoesNotExist', params: {} }],
     };
 
-    expect(() => synth(invalid, { cwd: root })).toThrow(/thisActionDoesNotExist|smoke test/);
+    expect(() => synth(invalid, { outDir: pluginOutDir() })).toThrow(/thisActionDoesNotExist|smoke test/);
 
-    const outputDir = join(root, 'src', 'plugins', 'fixture-plugin');
-    await expect(stat(outputDir)).rejects.toThrow();
+    await expect(stat(pluginOutDir())).rejects.toThrow();
   });
 
   it('never overwrites/corrupts a pre-existing scaffold.json when a later synth() call fails', async () => {
-    synth(VALID_DEFINITION, { cwd: root });
-    const outputPath = join(root, 'src', 'plugins', 'fixture-plugin', 'scaffold.json');
+    synth(VALID_DEFINITION, { outDir: pluginOutDir() });
+    const outputPath = join(pluginOutDir(), 'scaffold.json');
     const before = await readFile(outputPath, 'utf8');
 
     const invalid: ScaffoldDefinition = { ...VALID_DEFINITION, steps: [{ action: 'nope', params: {} }] };
-    expect(() => synth(invalid, { cwd: root })).toThrow();
+    expect(() => synth(invalid, { outDir: pluginOutDir() })).toThrow();
 
     const after = await readFile(outputPath, 'utf8');
     expect(after).toBe(before);
   });
 
   it('leaves no stray temp file behind after a successful write', async () => {
-    const result = synth(VALID_DEFINITION, { cwd: root });
-    const dir = join(root, 'src', 'plugins', 'fixture-plugin');
+    const result = synth(VALID_DEFINITION, { outDir: pluginOutDir() });
     const { readdir } = await import('node:fs/promises');
-    const entries = await readdir(dir);
+    const entries = await readdir(pluginOutDir());
     expect(entries).toEqual(['scaffold.json']);
     expect(result.outputPath.endsWith('scaffold.json')).toBe(true);
   });
 
-  it('creates the src/plugins/<id>/ directory tree when it does not already exist', async () => {
-    await synth(VALID_DEFINITION, { cwd: root });
-    const dirStat = await stat(join(root, 'src', 'plugins', 'fixture-plugin'));
+  it('creates the outDir directory tree when it does not already exist', async () => {
+    await synth(VALID_DEFINITION, { outDir: pluginOutDir() });
+    const dirStat = await stat(pluginOutDir());
     expect(dirStat.isDirectory()).toBe(true);
   });
 
-  it('defaults cwd to process.cwd() when not supplied', async () => {
+  it('defaults outDir to process.cwd() when not supplied', async () => {
     // Temporarily chdir into the per-test tmpdir (created by beforeEach,
     // removed by afterEach) so the real process.cwd() default can be
     // exercised for real, without ever risking a write into the actual
@@ -159,7 +164,7 @@ describe('synth', () => {
     try {
       const result = synth(VALID_DEFINITION, {});
 
-      const expectedPath = join(root, 'src', 'plugins', 'fixture-plugin', 'scaffold.json');
+      const expectedPath = join(root, 'scaffold.json');
       expect(result.outputPath).toBe(expectedPath);
 
       const raw = await readFile(result.outputPath, 'utf8');
@@ -167,5 +172,21 @@ describe('synth', () => {
     } finally {
       process.chdir(originalCwd);
     }
+  });
+
+  // ARCH-003 Decision 1 — the actual bug fix: an external author's
+  // `outDir` is never required to look like `src/plugins/<id>` at all.
+  it('writes beside an arbitrary outDir that is NOT src/plugins/<id> (external-author case)', async () => {
+    const externalOutDir = join(root, 'my-plugin');
+    const result = synth(VALID_DEFINITION, { outDir: externalOutDir });
+
+    const expectedPath = join(externalOutDir, 'scaffold.json');
+    expect(result.outputPath).toBe(expectedPath);
+
+    const raw = await readFile(expectedPath, 'utf8');
+    expect(JSON.parse(raw)).toEqual(VALID_DEFINITION);
+
+    // Confirms this really didn't fall back to the old src/plugins/<id> convention.
+    await expect(stat(join(root, 'src'))).rejects.toThrow();
   });
 });

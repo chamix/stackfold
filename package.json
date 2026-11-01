@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "e2e:playground": "node scripts/e2e-playground.mjs",
+    "e2e:plugin-scaffold": "node scripts/e2e-plugin-scaffold-playground.mjs",
     "test:coverage": "vitest run --coverage"
   },
   "keywords": [
@@ -72,5 +73,8 @@
   "homepage": "https://github.com/chamix/stackfold#readme",
   "bin": {
     "stackfold": "dist/cli/index.js"
+  },
+  "exports": {
+    "./authoring": "./dist/authoring/index.js"
   }
 }
