@@ -49,7 +49,7 @@ export default defineConfig({
      * then many parallel workers repeatedly hitting the same
      * import-time crash).
      */
-    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.manual-test-playground/**'],
+    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.manual-test-playground/**','**/.e2e-playground/**'],
     /**
      * `.manual-test-playground/**` holds standalone scaffolded apps
      * (e.g. `app-react`) used for manual, ad-hoc verification -- each
