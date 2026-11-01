@@ -33,6 +33,7 @@
     "handlebars": "^4.7.10",
     "json-logic-js": "^2.0.5",
     "picocolors": "^1.1.1",
+    "tsx": "^4.23.15",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -52,7 +53,6 @@
     "eslint": "^10.11.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.1",
     "vitest": "^5.0.2",
