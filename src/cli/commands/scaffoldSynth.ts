@@ -8,10 +8,15 @@
  * sibling `.hbs` files it loads via `src/authoring/templateLoader.ts`).
  *
  * Module-loading mechanism: `tsx`'s existing programmatic API,
- * `tsImport()` (`tsx/esm/api`) — `tsx` is already a devDependency
- * (`^4.23.15`, already used by this repo's own `"dev": "tsx
- * src/cli/index.ts"` script); no new devDependency is added for this.
- * `tsImport()` registers tsx's ESM loader hooks just long enough to
+ * `tsImport()` (`tsx/esm/api`) — `tsx` is a runtime `dependency`
+ * (`^4.23.15`; also used by this repo's own `"dev": "tsx
+ * src/cli/index.ts"` script) so that `scaffold synth` keeps working for a
+ * plain `npm install`'d consumer, not just inside this repo's own
+ * `node_modules` (PKG-001, 2026-11-01). `tsImport` itself is imported
+ * dynamically inside `loadScaffoldDefinition()` below rather than at this
+ * module's top level, so that starting the CLI for any other command
+ * (`list`, `info`, `init`, `plugin register`, etc.) never loads `tsx` at
+ * all. `tsImport()` registers tsx's ESM loader hooks just long enough to
  * resolve+execute the one specifier it's given (including that module's
  * own further imports — e.g. a scaffold's `import { file } from
  * '../../authoring/builder.js'`), then returns the resolved module
@@ -54,7 +59,6 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
-import { tsImport } from 'tsx/esm/api';
 import type { ScaffoldDefinition } from '../../core/authoring.js';
 import { synth, type SynthOptions } from '../../authoring/synth.js';
 
@@ -114,6 +118,10 @@ export async function runScaffoldSynth(dir: string, deps: ScaffoldSynthCommandDe
  */
 async function loadScaffoldDefinition(scaffoldTsPath: string): Promise<ScaffoldDefinition> {
   const moduleUrl = pathToFileURL(scaffoldTsPath).href;
+  // Lazily imported here (not at module top level) so that starting the CLI
+  // for any other command (`list`, `info`, `init`, `plugin register`, etc.)
+  // never loads `tsx` at all — only `scaffold synth` actually needs it.
+  const { tsImport } = await import('tsx/esm/api');
   const loaded = (await tsImport(moduleUrl, import.meta.url)) as Record<string, unknown>;
 
   const exported = 'default' in loaded ? loaded.default : loaded.scaffold;
