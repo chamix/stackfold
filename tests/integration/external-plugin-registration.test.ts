@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runPluginList, runPluginRegister, type PluginCommandDependencies } from '../../src/cli/commands/plugin.js';
+import { runPluginList, runPluginRegister, runPluginUnregister, type PluginCommandDependencies } from '../../src/cli/commands/plugin.js';
 import { runList, type ListCommandDependencies } from '../../src/cli/commands/list.js';
 import { runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
 import { CompositePluginRegistry } from '../../src/infra/compositePluginRegistry.js';
@@ -34,7 +34,14 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(projectDir, { recursive: true, force: true });
+  // `removeWithRetry()`, not a bare `rm()`: a real Windows run showed this
+  // can transiently `EBUSY` even after the inner `node_modules/stackfold`
+  // junction is removed on its own first (the plugin-scaffold test's own
+  // explicit, separately-retried removal, below) -- something else in a
+  // freshly-written tree (antivirus real-time scanning, a not-yet-released
+  // OS handle) can hold the parent directory itself just as transiently.
+  // Not reproduced on this session's own Linux verification.
+  await removeWithRetry(projectDir);
 });
 
 function pluginDeps(): PluginCommandDependencies & { stdoutLines: string[]; stderrLines: string[] } {
@@ -48,6 +55,23 @@ function pluginDeps(): PluginCommandDependencies & { stdoutLines: string[]; stde
     stdoutLines,
     stderrLines,
   };
+}
+
+/**
+ * Windows-safe recursive removal. Two real Windows runs showed a hand-rolled
+ * "retry the whole top-level rm() a few times, tens of ms apart" wrapper
+ * (this function's own first two revisions) isn't enough -- the actual
+ * `EBUSY`/`ENOTEMPTY` class of lock on a freshly-written tree (most likely
+ * Windows Defender's real-time scan, a well-documented source of exactly
+ * this flakiness, not something a few hundred ms reliably outlasts) needs
+ * Node's own built-in retry for `fs.rm`'s recursive walk itself
+ * (`maxRetries`/`retryDelay`, documented specifically for this Windows
+ * class of error, retrying each failed internal operation in place rather
+ * than restarting the whole walk from scratch). Not reproduced on this
+ * session's own Linux verification either way.
+ */
+async function removeWithRetry(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 function compositeRegistry() {
@@ -136,5 +160,45 @@ describe('external plugin registration — real end-to-end (tmpdir, --project)',
 
     const configPath = join(projectDir, '.stackfold-pluginsrc.json');
     await expect(readFile(configPath, 'utf8')).rejects.toThrow();
+  });
+});
+
+describe('external plugin unregister (ARCH-003 follow-up)', () => {
+  it('unregisters a hand-written scaffold.json plugin -- removed from "plugin list", "stackfold list", and the config file', async () => {
+    const sourcePath = join(projectDir, 'my-plugin.json');
+    await writeFile(
+      sourcePath,
+      JSON.stringify({
+        id: 'external-fixture-unreg',
+        description: 'A second externally registered fixture, for unregister coverage.',
+        questions: [],
+        steps: [{ action: 'writeFile', params: { path: 'README.md', content: '# hi\n' } }],
+      }),
+      'utf8'
+    );
+
+    const registerDeps = pluginDeps();
+    expect(await runPluginRegister('my-plugin.json', { project: true }, registerDeps)).toBe(0);
+
+    const beforeListDeps = pluginDeps();
+    await runPluginList(beforeListDeps);
+    expect(beforeListDeps.stdoutLines.join('\n')).toContain('external-fixture-unreg');
+
+    const unregisterDeps = pluginDeps();
+    const unregisterCode = await runPluginUnregister('external-fixture-unreg', { project: true }, unregisterDeps);
+    expect(unregisterCode).toBe(0);
+    expect(unregisterDeps.stderrLines).toEqual([]);
+
+    const configPath = join(projectDir, '.stackfold-pluginsrc.json');
+    const rawConfig = JSON.parse(await readFile(configPath, 'utf8')) as { plugins: Record<string, unknown> };
+    expect(rawConfig.plugins).toEqual({});
+
+    const afterListDeps = pluginDeps();
+    await runPluginList(afterListDeps);
+    expect(afterListDeps.stdoutLines.join('\n')).not.toContain('external-fixture-unreg');
+
+    const listStdout: string[] = [];
+    await runList({ registry: compositeRegistry(), stdout: (l) => listStdout.push(l) });
+    expect(listStdout.join('\n')).not.toContain('external-fixture-unreg');
   });
 });

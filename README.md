@@ -27,11 +27,10 @@ stackfold init electron-ts ./my-app
 ## Why
 
 Built to stop re-solving the same app shell from scratch for each new
-personal project (starting from the `md-view` / `md-presenter` lineage
-for `electron-ts`), but designed stack-agnostic from day one: the CLI
-core doesn't know about Electron, React, Vue, or plain HTML — each lives
-entirely in its own plugin. Adding support for another stack later means
-writing another plugin, not touching the core.
+project, but designed stack-agnostic from day one: the CLI core doesn't
+know about Electron, React, Vue, or plain HTML — each lives entirely in
+its own plugin. Adding support for another stack later means writing
+another plugin, not touching the core.
 
 ## Built-in plugins
 
@@ -51,9 +50,16 @@ release:
   vanilla TS. One `appType` question replaces what used to be two
   separate plugins (`web-app-spa` and `web-app-standalone-html`, removed
   in this release — see [CHANGELOG](./CHANGELOG.md)).
-- **`plugin-builder`** — scaffolds a brand-new stackfold plugin (as a TS
-  `scaffold.ts` + synth) and registers it into stackfold's own plugin
-  registry. Meant to be run from a checkout of this repo.
+- **`plugin-builder`** — stackfold's own self-extension tool: scaffolds a
+  brand-new *built-in* plugin (as a TS `scaffold.ts` + synth) and patches
+  it straight into stackfold's own plugin registry. Only useful from a
+  checkout of this repo — it's how stackfold extends itself, not how you
+  author a standalone plugin.
+- **`plugin-scaffold`** — scaffolds a brand-new, standalone stackfold
+  plugin you can author and distribute on your own, with **no repo
+  checkout required**. The recommended starting point for authoring any
+  plugin that isn't meant to live inside stackfold's own source tree —
+  see [Writing a plugin](#writing-a-plugin) below.
 
 Beyond the built-ins, you can register your own plugins without
 touching stackfold's source — see
@@ -142,16 +148,32 @@ for everyone else.
 
 ## Writing a plugin
 
-The recommended path is `plugin-builder`:
+The recommended path is `plugin-scaffold` — it needs no checkout of this
+repo, works from any directory, and produces a standalone plugin you can
+register anywhere:
+
+```bash
+stackfold init plugin-scaffold ./my-plugin
+```
+
+It scaffolds a new, standalone plugin at `./my-plugin/`, authored as a TS
+`scaffold.ts` (importing the authoring DSL from the installed `stackfold`
+package itself — see [Authoring a plugin without a repo
+checkout](#authoring-a-plugin-without-a-repo-checkout) below) plus
+sibling `.hbs` templates and its own `package.json`, synthesizes its
+canonical `scaffold.json` via a real `stackfold scaffold synth` call, and
+prints the exact `stackfold plugin register` command to run next.
+
+If you're extending *stackfold itself* — adding a new built-in plugin to
+this repo's own source tree — use `plugin-builder` instead:
 
 ```bash
 stackfold init plugin-builder   # from a checkout of this repo
 ```
 
-It scaffolds a new plugin under `src/plugins/<id>/` as a TS
-`scaffold.ts` plus sibling `.hbs` templates, synthesizes its canonical
-`scaffold.json` via a real `stackfold scaffold synth` call, and
-registers it into `src/cli/index.ts`.
+It scaffolds a new built-in plugin under `src/plugins/<id>/` the same
+way, but registers it by patching `src/cli/index.ts` directly — which is
+why it only works inside a checkout.
 
 Under the hood, a scaffold author describes a plugin declaratively:
 `questions` (optionally with `when` conditions and `deriveAnswer` steps
@@ -165,9 +187,9 @@ extension), and optional lifecycle hooks (`preInit`, `postWrite`,
 `mountFragment()`/`composeFragments()`, each namespaced
 Terraform-module-style so two fragments never collide on a question id.
 
-This authoring system is how 3 of the 4 built-in plugins
-(`electron-stackfold`, `web-app-stackfold`, `plugin-builder`) are built
-today. `electron-ts` remains hand-written on purpose: it's the
+This authoring system is how 4 of the 5 built-in plugins
+(`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
+`plugin-scaffold`) are built today. `electron-ts` remains hand-written on purpose: it's the
 reference implementation the declarative system is checked against, so
 if the declarative approach can't express something `electron-ts` does
 by hand, that's a signal the authoring system still has a gap to
@@ -178,19 +200,20 @@ init-only, so neither needs to migrate to the other. See the
 
 ## Authoring a plugin without a repo checkout
 
-The `plugin-builder` path above is the recommended way to author a plugin,
-but it **requires a checkout of this repository** — it shells out to `npx
-tsx src/cli/index.ts scaffold synth <dir>`, a file that only exists inside
-`stackfold`'s own source tree, not in anything `npm install stackfold`
-gives you.
+`plugin-scaffold` (above) is exactly this: run `stackfold init
+plugin-scaffold ./my-plugin` from anywhere — no checkout, no access to
+`stackfold`'s own source — and you get a real, TS-authored plugin
+(`validate` closures included) synthesized by the same `stackfold
+scaffold synth` pipeline `plugin-builder` uses internally, ready for
+`stackfold plugin register`.
 
-If you installed `stackfold` from npm and have no repo checkout, the path
-below is how you actually author a plugin: hand-write a `scaffold.json`
-against the schema documented here, then run `stackfold plugin register`.
-This is not a workaround — it's the same file `plugin-builder`/`scaffold
-synth` produce for you, and it's fully supported by `stackfold plugin
-register`/`list`/`info`/`init`. You're just skipping the TS-authoring
-step and writing the compiled artifact directly.
+If you'd rather skip TypeScript entirely, you can hand-write a
+`scaffold.json` directly against the schema documented below, then run
+`stackfold plugin register`. This is not a workaround — it's the same
+file `plugin-scaffold`/`scaffold synth` produce for you, and it's fully
+supported by `stackfold plugin register`/`list`/`info`/`init`. You're
+just skipping the TS-authoring step (and its `validate` closures) and
+writing the compiled artifact directly.
 
 ### The `ScaffoldDefinition` shape
 
@@ -376,15 +399,11 @@ stackfold info hello-world
 stackfold init hello-world ./my-app
 ```
 
-> **⚠️ `stackfold scaffold synth <dir>` writes relative to your current
-> working directory, not `<dir>`.** If you *do* have a repo checkout and
-> author a plugin as TypeScript (`scaffold.ts`), running `stackfold
-> scaffold synth <dir>` does **not** write the output next to `<dir>`. It
-> always writes to `<cwd>/src/plugins/<id>/scaffold.json`, where `<cwd>`
-> is the directory you ran the command *from* and `<id>` is the `id`
-> declared inside `scaffold.ts` — regardless of what `<dir>` you passed.
-> Run `synth` from the location whose `src/plugins/<id>/` you actually
-> want written to, not from inside `<dir>` itself.
+> If you *do* author a plugin as TypeScript (`scaffold.ts`) instead of
+> hand-writing JSON, `stackfold scaffold synth <dir>` writes the
+> resulting `scaffold.json` directly into `<dir>`, next to the
+> `scaffold.ts` it just compiled — `plugin-scaffold` relies on exactly
+> this when it calls `synth` on its own freshly generated plugin.
 
 ## Architecture
 
@@ -396,8 +415,8 @@ src/
               types, orchestrator, the declarative scaffold-authoring
               compiler (authoring.ts), validation
   plugins/    one folder per built-in stack (electron-ts,
-              electron-stackfold, web-app-stackfold, plugin-builder),
-              each implementing the plugin contract
+              electron-stackfold, web-app-stackfold, plugin-builder,
+              plugin-scaffold), each implementing the plugin contract
   infra/      adapters: file system, git/process execution (execa),
               prompts (@inquirer), the composite + dynamic plugin
               registries, expression evaluation (json-logic-js)

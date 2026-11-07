@@ -152,8 +152,23 @@ function formatZodIssues(error: z.ZodError): string {
 // ---------------------------------------------------------------------------
 
 export interface SynthOptions {
-  /** Base directory the canonical `src/plugins/<id>/scaffold.json` path is resolved against. Defaults to `process.cwd()`. */
-  cwd?: string;
+  /**
+   * Directory the output `scaffold.json` is written into (ARCH-003
+   * Decision 1) — the directory containing the `scaffold.ts` actually
+   * being compiled (the `<dir>` argument
+   * `src/cli/commands/scaffoldSynth.ts` already resolves), never
+   * `process.cwd()`-anchored. For `plugin-builder`'s own invocation
+   * (`scaffold synth src/plugins/<pluginId>`), `outDir` is exactly
+   * `src/plugins/<pluginId>`, giving a byte-identical output path to the
+   * old, hardcoded `resolve(cwd, 'src', 'plugins', <id>, 'scaffold.json')`
+   * convention — this is the regression guard for that self-extension
+   * path. For an external author running `stackfold scaffold synth
+   * ./my-plugin` from anywhere, output correctly lands at
+   * `./my-plugin/scaffold.json`. Defaults to `process.cwd()` when omitted
+   * (only exercised directly by `tests/unit/authoring-synth.test.ts`;
+   * every real caller passes `outDir` explicitly).
+   */
+  outDir?: string;
   /** Defaults to a real `JsonLogicExpressionEvaluator` — SK-ADR-003 Decision 6's "real" smoke test, never a fake, unless a test deliberately overrides it. */
   evaluator?: ExpressionEvaluator;
 }
@@ -163,14 +178,15 @@ export interface SynthResult {
 }
 
 /**
- * Validates, smoke-tests, and writes `definition` to its canonical
- * `src/plugins/<id>/scaffold.json` path (same convention `plugin-builder`'s
- * own generated manifests already use). Throws — without writing anything
- * — on any failure; see this module's header comment for the invariant
- * that guarantees that.
+ * Validates, smoke-tests, and writes `definition` to `scaffold.json`
+ * inside `options.outDir` (ARCH-003 Decision 1 — previously always
+ * `<cwd>/src/plugins/<id>/scaffold.json`, which silently assumed `cwd` was
+ * a stackfold checkout root; see this module's header comment). Throws —
+ * without writing anything — on any failure; see this module's header
+ * comment for the invariant that guarantees that.
  */
 export function synth(definition: ScaffoldDefinition, options: SynthOptions = {}): SynthResult {
-  const cwd = options.cwd ?? process.cwd();
+  const outDir = options.outDir ?? process.cwd();
   const evaluator = options.evaluator ?? new JsonLogicExpressionEvaluator();
 
   const parsed = scaffoldDefinitionSchema.safeParse(definition);
@@ -189,7 +205,7 @@ export function synth(definition: ScaffoldDefinition, options: SynthOptions = {}
     throw new Error(`synth: compileScaffold() smoke test failed for "${definition.id}": ${toMessage(err)}`);
   }
 
-  const outputPath = resolve(cwd, 'src', 'plugins', definition.id, 'scaffold.json');
+  const outputPath = resolve(outDir, 'scaffold.json');
   const json = `${JSON.stringify(definition, null, 2)}\n`;
   writeJsonAtomic(outputPath, json);
 

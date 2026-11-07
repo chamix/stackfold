@@ -11,8 +11,12 @@
     "postbuild": "node scripts/copy-templates.mjs",
     "dev": "tsx src/cli/index.ts",
     "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit --exclude tests/unit/electron-ts-plugin-tier2.test.ts --exclude tests/unit/electron-ts-plugin.test.ts --exclude tests/unit/web-app-stackfold-plugin-tier3.test.ts --exclude tests/unit/web-app-stackfold-plugin.test.ts --exclude tests/unit/web-app-stackfold-plugin-vue.test.ts --exclude tests/unit/web-app-stackfold-plugin-vanilla.test.ts --exclude tests/unit/plugin-scaffold.test.ts --exclude tests/unit/plugin-builder.test.ts",
+    "test:unit:plugins": "vitest run tests/unit/electron-ts-plugin-tier2.test.ts tests/unit/electron-ts-plugin.test.ts tests/unit/web-app-stackfold-plugin-tier3.test.ts tests/unit/web-app-stackfold-plugin.test.ts tests/unit/web-app-stackfold-plugin-vue.test.ts tests/unit/web-app-stackfold-plugin-vanilla.test.ts tests/unit/plugin-scaffold.test.ts tests/unit/plugin-builder.test.ts src/plugins",
+    "test:integration": "vitest run tests/integration",
     "typecheck": "tsc --noEmit",
     "e2e:playground": "node scripts/e2e-playground.mjs",
+    "e2e:plugin-scaffold": "node scripts/e2e-plugin-scaffold-playground.mjs",
     "test:coverage": "vitest run --coverage"
   },
   "keywords": [
@@ -72,5 +76,8 @@
   "homepage": "https://github.com/chamix/stackfold#readme",
   "bin": {
     "stackfold": "dist/cli/index.js"
+  },
+  "exports": {
+    "./authoring": "./dist/authoring/index.js"
   }
 }

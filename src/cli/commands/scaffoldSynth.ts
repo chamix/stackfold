@@ -5,7 +5,11 @@
  * `ScaffoldDefinition` to `src/authoring/synth.ts`'s pipeline.
  *
  * `<dir>` is the directory containing the author's `scaffold.ts` (and any
- * sibling `.hbs` files it loads via `src/authoring/templateLoader.ts`).
+ * sibling `.hbs` files it loads via `src/authoring/templateLoader.ts`). This
+ * is also exactly the `outDir` handed to `src/authoring/synth.ts`'s
+ * `synth()` (ARCH-003 Decision 1) — `scaffold.json` always lands beside the
+ * `scaffold.ts` that produced it, independent of the invoking process's own
+ * `process.cwd()`.
  *
  * Module-loading mechanism: `tsx`'s existing programmatic API,
  * `tsImport()` (`tsx/esm/api`) — `tsx` is a runtime `dependency`
@@ -56,7 +60,7 @@
  * changes once `stackfold init` itself runs (which only ever consumes the
  * already-synthesized, already-committed `scaffold.json`).
  */
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
 import type { ScaffoldDefinition } from '../../core/authoring.js';
@@ -65,8 +69,6 @@ import { synth, type SynthOptions } from '../../authoring/synth.js';
 export interface ScaffoldSynthCommandDependencies {
   stdout: (line: string) => void;
   stderr: (line: string) => void;
-  /** Base for resolving the canonical `src/plugins/<id>/scaffold.json` output path (`src/authoring/synth.ts`'s own `cwd`). */
-  cwd: () => string;
 }
 
 /**
@@ -88,8 +90,9 @@ export function registerScaffoldSynthCommand(program: Command, deps: ScaffoldSyn
 
 /** Returns the process exit code; never throws. */
 export async function runScaffoldSynth(dir: string, deps: ScaffoldSynthCommandDependencies): Promise<number> {
-  const { stdout, stderr, cwd } = deps;
+  const { stdout, stderr } = deps;
   const scaffoldTsPath = resolve(dir, 'scaffold.ts');
+  const outDir = dirname(scaffoldTsPath);
 
   let definition: ScaffoldDefinition;
   try {
@@ -100,7 +103,7 @@ export async function runScaffoldSynth(dir: string, deps: ScaffoldSynthCommandDe
   }
 
   try {
-    const options: SynthOptions = { cwd: cwd() };
+    const options: SynthOptions = { outDir };
     const result = synth(definition, options);
     stdout(`stackfold scaffold synth: wrote ${result.outputPath}`);
     return 0;
