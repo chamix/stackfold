@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-11-07
+
+### Added
+
+- **`plugin-scaffold` built-in plugin** (ARCH-003): scaffolds a standalone
+  stackfold plugin (`scaffold.ts`, `package.json`, README, test) from any
+  directory — no repo checkout required. It is now the recommended way to
+  author a plugin; `plugin-builder` remains the repo's own
+  self-extension tool.
+- **`stackfold/authoring` public entry point**: a new `exports` map exposes
+  the authoring DSL, so an external `scaffold.ts` can
+  `import ... from 'stackfold/authoring'`.
+- New `test:unit`, `test:unit:plugins` and `test:integration` npm scripts
+  for targeted local runs (dev tooling only).
+
+### Changed
+
+- `stackfold scaffold synth <dir>` now writes `scaffold.json` next to the
+  authored `scaffold.ts` (inside `<dir>`) instead of
+  `<cwd>/src/plugins/<id>/scaffold.json`. `plugin-builder`'s own invocation
+  (`scaffold synth src/plugins/<id>`) resolves to the same path as before.
+- README: the "Authoring a plugin without a repo checkout" section now
+  leads with `plugin-scaffold`.
+
 ## [2.1.1] - 2026-11-01
 
 ### Fixed
