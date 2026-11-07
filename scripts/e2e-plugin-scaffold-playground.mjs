@@ -40,7 +40,7 @@
  *   npm run e2e:plugin-scaffold
  */
 import { execa } from 'execa';
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,15 +74,17 @@ async function main() {
   await run('build', 'npm', ['run', 'build'], { cwd: REPO_ROOT });
 
   const packDestination = await mkdtemp(join(tmpdir(), 'stackfold-pack-'));
-  console.log(`\n$ npm pack --json --pack-destination ${packDestination}\n  (cwd: ${REPO_ROOT})\n`);
-  // Deliberately NOT `stdio: 'inherit'` here (unlike every other `run()`
-  // call below) — this is the one command whose stdout this script needs
-  // to parse as JSON, so it's captured instead of streamed live.
-  const { stdout: packJson } = await execa('npm', ['pack', '--json', '--pack-destination', packDestination], {
-    cwd: REPO_ROOT,
-  });
-  const [{ filename: tarballName }] = JSON.parse(packJson);
-  const tarballPath = join(packDestination, tarballName);
+  console.log(`\n$ npm pack --pack-destination ${packDestination}\n  (cwd: ${REPO_ROOT})\n`);
+  // The tarball is located by listing the destination directory instead of
+  // parsing `npm pack --json`: that output's shape differs across npm
+  // versions (array on some, a different object on others), while the
+  // destination directory holds exactly one .tgz regardless.
+  await execa('npm', ['pack', '--pack-destination', packDestination], { cwd: REPO_ROOT });
+  const tarballs = (await readdir(packDestination)).filter((name) => name.endsWith('.tgz'));
+  if (tarballs.length !== 1) {
+    throw new Error(`expected exactly one .tgz in ${packDestination}, found: ${JSON.stringify(tarballs)}`);
+  }
+  const tarballPath = join(packDestination, tarballs[0]);
   await stat(tarballPath); // throws loudly if npm pack silently produced nothing at this path
 
   log('2/6', `Installing the packed tarball into a brand-new, empty sandbox (no repo node_modules involved)...`);
