@@ -9,7 +9,7 @@ import {
   formatPostAction,
   runPlugin,
 } from '../../src/core/orchestrator.js';
-import type { FileWriter, ProcessRunner, Prompter } from '../../src/core/ports.js';
+import type { FileRemover, FileWriter, ProcessRunner, Prompter } from '../../src/core/ports.js';
 import type {
   Answers,
   HookName,
@@ -640,12 +640,17 @@ describe('runPlugin — ARCH-001 hook invocation points (preInit/postWrite/postI
 
     await runPlugin(h.plugin, TARGET, h.ports);
 
-    expect(seenPorts).toBe(h.ports);
+    // ARCH-004 Invariant A: hooks get a NEW object carrying exactly these 3
+    // ports (never `ports` itself, so a hook can never reach the
+    // orchestrator-only `fileRemover`) — same port values, deliberately not
+    // the same object reference.
+    expect(seenPorts).not.toBe(h.ports);
     expect(seenPorts).toEqual({
       prompter: h.ports.prompter,
       fileWriter: h.ports.fileWriter,
       processRunner: h.ports.processRunner,
     });
+    expect(Object.keys(seenPorts as object).sort()).toEqual(['fileWriter', 'processRunner', 'prompter']);
   });
 
   it('passes the same resolved answers reference to every hook moment (preInit/postWrite/postInit), never re-resolved per call', async () => {
@@ -832,5 +837,201 @@ describe('runPlugin — ARCH-001 hook invocation points (preInit/postWrite/postI
       expect(h.calls.filter((c) => c.step === 'writeFile')).toHaveLength(1);
       expect(await h.ports.fileWriter.readFile('a.txt')).toBe('overwritten via the new method');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ARCH-004 / SK-ADR-006 — rollback of files written by a failed run
+// ---------------------------------------------------------------------------
+
+type RemoverCall =
+  | { op: 'removeFile'; path: string; root: string }
+  | { op: 'removeDirIfEmpty'; path: string; root: string };
+
+/**
+ * A fake `FileRemover`: records every call (op + path + root) and can be
+ * told to fail specific absolute paths, so tests can assert both "what got
+ * removed, in what order" and "a rollback failure never masks the original
+ * error".
+ */
+function fakeFileRemover(opts: { failRemoveFileOn?: string[] } = {}): {
+  fileRemover: FileRemover;
+  calls: RemoverCall[];
+} {
+  const calls: RemoverCall[] = [];
+  const fileRemover: FileRemover = {
+    async removeFile(path, root) {
+      calls.push({ op: 'removeFile', path, root });
+      if (opts.failRemoveFileOn?.includes(path)) {
+        throw new Error(`EBUSY: resource busy removing ${path}`);
+      }
+    },
+    async removeDirIfEmpty(path, root) {
+      calls.push({ op: 'removeDirIfEmpty', path, root });
+    },
+  };
+  return { fileRemover, calls };
+}
+
+describe('runPlugin — ARCH-004/SK-ADR-006 rollback on a D1 failure class', () => {
+  it('on ScaffoldWriteError, removes exactly the files written so far, in reverse order', async () => {
+    const { fileRemover, calls } = fakeFileRemover();
+    const h = harness({
+      blueprint: {
+        files: [
+          { path: 'a.txt', content: 'A' },
+          { path: 'src/nested/b.ts', content: 'B' },
+          { path: 'c.txt', content: 'C' },
+        ],
+        postActions: [],
+      },
+      failWriteOn: 'c.txt',
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ScaffoldWriteError);
+    const writeErr = err as ScaffoldWriteError;
+    expect(writeErr.writtenFiles).toEqual(['a.txt', 'src/nested/b.ts']);
+    expect(writeErr.rolledBack).toEqual(['src/nested/b.ts', 'a.txt']);
+    expect(writeErr.rollbackFailures).toEqual([]);
+
+    expect(calls.filter((c) => c.op === 'removeFile')).toEqual([
+      { op: 'removeFile', path: `${TARGET}/src/nested/b.ts`, root: TARGET },
+      { op: 'removeFile', path: `${TARGET}/a.txt`, root: TARGET },
+    ]);
+    // Deepest directory pruned first.
+    const dirPrunes = calls.filter((c) => c.op === 'removeDirIfEmpty').map((c) => c.path);
+    expect(dirPrunes).toEqual([`${TARGET}/src/nested`, `${TARGET}/src`]);
+  });
+
+  it('on a HookError raised in postWrite, rolls back everything written by this run', async () => {
+    const { fileRemover, calls } = fakeFileRemover();
+    const boom = new Error('postWrite guard failed');
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      hooks: {
+        postWrite: [
+          () => {
+            throw boom;
+          },
+        ],
+      },
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    const hookErr = err as HookError;
+    expect(hookErr.hookName).toBe('postWrite');
+    expect(hookErr.filesWritten).toEqual(['a.txt', 'b.txt']);
+    expect(hookErr.rolledBack).toEqual(['b.txt', 'a.txt']);
+    expect(hookErr.rollbackFailures).toEqual([]);
+    expect(calls.filter((c) => c.op === 'removeFile')).toHaveLength(2);
+  });
+
+  it.each<[string, Partial<Record<HookName, (() => void)[]>>, string]>([
+    ['preInit', { preInit: [() => { throw new Error('boom'); }] }, 'preInit'],
+    ['postInit', { postInit: [() => { throw new Error('boom'); }] }, 'postInit'],
+  ])('does NOT roll back a HookError raised in %s', async (_label, hooks) => {
+    const { fileRemover, calls } = fakeFileRemover();
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [] },
+      hooks,
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HookError);
+    expect((err as HookError).rolledBack).toEqual([]);
+    expect(calls.filter((c) => c.op === 'removeFile')).toHaveLength(0);
+  });
+
+  it('does NOT roll back a PostActionError — the project is complete, files stay', async () => {
+    const { fileRemover, calls } = fakeFileRemover();
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }], postActions: [{ kind: 'npm-install' }] },
+      failRunOn: 'npm',
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(PostActionError);
+    expect(calls.filter((c) => c.op === 'removeFile')).toHaveLength(0);
+  });
+
+  it('keepOnFailure:true preserves the legacy behavior exactly — nothing removed, empty rollback fields', async () => {
+    const { fileRemover, calls } = fakeFileRemover();
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      failWriteOn: 'b.txt',
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }, { keepOnFailure: true }).catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(ScaffoldWriteError);
+    const writeErr = err as ScaffoldWriteError;
+    expect(writeErr.writtenFiles).toEqual(['a.txt']);
+    expect(writeErr.rolledBack).toEqual([]);
+    expect(writeErr.rollbackFailures).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('a missing fileRemover preserves the legacy behavior exactly — no port, nothing removed', async () => {
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      failWriteOn: 'b.txt',
+    });
+
+    // h.ports carries no fileRemover at all — the pre-ARCH-004 shape.
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ScaffoldWriteError);
+    const writeErr = err as ScaffoldWriteError;
+    expect(writeErr.rolledBack).toEqual([]);
+    expect(writeErr.rollbackFailures).toEqual([]);
+  });
+
+  it('a rollback failure never masks the original error, and is reported alongside it', async () => {
+    const { fileRemover } = fakeFileRemover({ failRemoveFileOn: [`${TARGET}/a.txt`] });
+    const h = harness({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      failWriteOn: 'b.txt',
+    });
+
+    const err = await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ScaffoldWriteError);
+    const writeErr = err as ScaffoldWriteError;
+    // The original write failure is still what's reported...
+    expect(writeErr.failedFile).toBe('b.txt');
+    expect(writeErr.message).toContain('b.txt');
+    // ...and the partial rollback outcome is attached, not swallowed.
+    expect(writeErr.rolledBack).toEqual([]);
+    expect(writeErr.rollbackFailures).toEqual([
+      { path: 'a.txt', reason: expect.stringContaining('EBUSY') },
+    ]);
+  });
+
+  it('a hook never receives the fileRemover port, even when one is configured', async () => {
+    const { fileRemover } = fakeFileRemover();
+    let seenPorts: HookPorts | undefined;
+    const h = harness({
+      hooks: {
+        postInit: [
+          (ports) => {
+            seenPorts = ports;
+          },
+        ],
+      },
+    });
+
+    await runPlugin(h.plugin, TARGET, { ...h.ports, fileRemover });
+
+    expect(seenPorts).toBeDefined();
+    expect('fileRemover' in (seenPorts as object)).toBe(false);
+    expect(Object.keys(seenPorts as object).sort()).toEqual(['fileWriter', 'processRunner', 'prompter']);
   });
 });

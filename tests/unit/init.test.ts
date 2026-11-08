@@ -14,7 +14,12 @@ const CWD = resolve('/base/dir');
 function fakePlugin(
   id: string,
   blueprint: ProjectBlueprint,
-  opts: { questions?: QuestionDefinition[]; onBuildBlueprint?: (answers: Answers) => void } = {}
+  opts: {
+    questions?: QuestionDefinition[];
+    onBuildBlueprint?: (answers: Answers) => void;
+    /** ARCH-004: a plugin whose postWrite hook always fails, to exercise HookError-triggered rollback. */
+    failPostWrite?: Error;
+  } = {}
 ): StackfoldPlugin {
   return {
     id,
@@ -24,6 +29,17 @@ function fakePlugin(
       opts.onBuildBlueprint?.(answers);
       return blueprint;
     },
+    ...(opts.failPostWrite
+      ? {
+          hooks: {
+            postWrite: [
+              () => {
+                throw opts.failPostWrite;
+              },
+            ],
+          },
+        }
+      : {}),
   };
 }
 
@@ -49,12 +65,19 @@ function setup(opts: {
   onBuildBlueprint?: (answers: Answers) => void;
   /** Overrides the default fake ask() implementation (default returns {}). */
   ask?: (questions: QuestionDefinition[]) => Promise<Answers>;
+  /** ARCH-004: the "fake" plugin's postWrite hook always throws this. */
+  failPostWrite?: Error;
+  /** ARCH-004: wires a fake FileRemover onto deps.ports when true. */
+  withFileRemover?: boolean;
+  /** ARCH-004: paths (as handed to removeFile) that should fail to remove. */
+  failRemoveFileOn?: string[];
 } = {}) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const ensuredDirs: string[] = [];
   const ensuredOptions: Array<{ force?: boolean; ignoreEntries?: readonly string[] } | undefined> = [];
   const writes: string[] = [];
+  const removes: string[] = [];
   const runs: string[] = [];
   const askCalls: number[] = [];
   /** Task 044 (UX-001): every `questions` array ever handed to `ask()`, in call order. */
@@ -68,7 +91,11 @@ function setup(opts: {
   };
 
   const plugins = [
-    fakePlugin('fake', opts.blueprint ?? DEFAULT_BLUEPRINT, { questions: opts.questions, onBuildBlueprint: opts.onBuildBlueprint }),
+    fakePlugin('fake', opts.blueprint ?? DEFAULT_BLUEPRINT, {
+      questions: opts.questions,
+      onBuildBlueprint: opts.onBuildBlueprint,
+      failPostWrite: opts.failPostWrite,
+    }),
     fakePlugin('other', DEFAULT_BLUEPRINT),
   ];
   const registry: PluginRegistry = {
@@ -111,13 +138,26 @@ function setup(opts: {
           runs.push([command, ...args].join(' '));
         },
       },
+      ...(opts.withFileRemover
+        ? {
+            fileRemover: {
+              removeFile: async (path: string) => {
+                if (opts.failRemoveFileOn?.includes(path)) {
+                  throw new Error(`EBUSY: resource busy removing ${path}`);
+                }
+                removes.push(path);
+              },
+              removeDirIfEmpty: async () => {},
+            },
+          }
+        : {}),
     },
     cwd: () => CWD,
     stdout: (line) => stdout.push(line),
     stderr: (line) => stderr.push(line),
   };
 
-  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, runs, askCalls, askedQuestions, openCalls };
+  return { deps, stdout, stderr, ensuredDirs, ensuredOptions, writes, removes, runs, askCalls, askedQuestions, openCalls };
 }
 
 /**
@@ -275,6 +315,104 @@ describe('runInit — failures', () => {
     await runInit('fake', 'my-app', s.deps);
 
     expect(section(s.stderr, 'Not run')).toEqual(actions.map(formatPostAction));
+  });
+});
+
+describe('runInit — ARCH-004/SK-ADR-006 rollback on failure (--keep-on-failure)', () => {
+  it('ScaffoldWriteError with a fileRemover wired: reports "Rolled back N file(s)", not the legacy wording', async () => {
+    const s = setup({
+      blueprint: {
+        files: [
+          { path: 'a.txt', content: 'A' },
+          { path: 'b.txt', content: 'B' },
+        ],
+        postActions: [],
+      },
+      failWriteOn: 'b.txt',
+      withFileRemover: true,
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(1);
+
+    expect(s.stderr.join('\n')).toContain('Rolled back 1 file(s).');
+    expect(section(s.stderr, 'Written before the failure')).toEqual([]);
+    expect(s.removes).toEqual([`${resolve(CWD, 'my-app')}/a.txt`]);
+  });
+
+  it('--keep-on-failure: even with a fileRemover wired, keeps the legacy "remove or keep by hand" wording and removes nothing', async () => {
+    const s = setup({
+      blueprint: {
+        files: [
+          { path: 'a.txt', content: 'A' },
+          { path: 'b.txt', content: 'B' },
+        ],
+        postActions: [],
+      },
+      failWriteOn: 'b.txt',
+      withFileRemover: true,
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps, { keepOnFailure: true })).toBe(1);
+
+    expect(section(s.stderr, 'Written before the failure')).toEqual(['a.txt']);
+    expect(s.stderr.join('\n')).not.toContain('Rolled back');
+    expect(s.removes).toEqual([]);
+  });
+
+  it('--keep-on-failure via the real registerInitCommand/Commander parse plumbs through to runPlugin', async () => {
+    const s = setup({
+      blueprint: {
+        files: [
+          { path: 'a.txt', content: 'A' },
+          { path: 'b.txt', content: 'B' },
+        ],
+        postActions: [],
+      },
+      failWriteOn: 'b.txt',
+      withFileRemover: true,
+    });
+    const program = new Command();
+    program.exitOverride();
+    registerInitCommand(program, s.deps);
+    process.exitCode = undefined;
+
+    await program.parseAsync(['init', 'fake', 'my-app', '--keep-on-failure'], { from: 'user' });
+
+    expect(process.exitCode).toBe(1);
+    expect(section(s.stderr, 'Written before the failure')).toEqual(['a.txt']);
+    expect(s.removes).toEqual([]);
+
+    process.exitCode = undefined;
+  });
+
+  it('a postWrite HookError with a fileRemover wired: rolls back and lists what could not be removed', async () => {
+    const boom = new Error('plugin-scaffold: directory did not match the pluginId answer');
+    const s = setup({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      failPostWrite: boom,
+      withFileRemover: true,
+      failRemoveFileOn: [`${resolve(CWD, 'my-app')}/a.txt`],
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(1);
+
+    expect(s.stderr[0]).toContain('plugin-scaffold: directory did not match');
+    expect(s.stderr.join('\n')).toContain('Rolled back 1 file(s).');
+    expect(section(s.stderr, 'Could not remove')).toEqual([
+      expect.stringContaining(`${resolve(CWD, 'my-app')}/a.txt`),
+    ]);
+  });
+
+  it('no fileRemover wired at all: ScaffoldWriteError keeps today\'s exact "remove or keep by hand" behavior', async () => {
+    const s = setup({
+      blueprint: { files: [{ path: 'a.txt', content: 'A' }, { path: 'b.txt', content: 'B' }], postActions: [] },
+      failWriteOn: 'b.txt',
+    });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(1);
+
+    expect(section(s.stderr, 'Written before the failure')).toEqual(['a.txt']);
+    expect(s.stderr.join('\n')).not.toContain('Rolled back');
   });
 });
 

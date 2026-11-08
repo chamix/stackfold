@@ -14,7 +14,7 @@ import { registerPluginCommand } from './commands/plugin.js';
 import { registerScaffoldSynthCommand } from './commands/scaffoldSynth.js';
 import { CompositePluginRegistry } from '../infra/compositePluginRegistry.js';
 import { DynamicPluginRegistry } from '../infra/dynamicPluginRegistry.js';
-import { NodeFileWriter } from '../infra/fs.js';
+import { NodeFileRemover, NodeFileWriter } from '../infra/fs.js';
 import { NativeOpener } from '../infra/open.js';
 import { StaticPluginRegistry } from '../infra/pluginLoader.js';
 import { ExecaProcessRunner } from '../infra/processRunner.js';
@@ -99,6 +99,9 @@ registerInitCommand(program, {
     prompter: new InquirerPrompter(),
     fileWriter: new NodeFileWriter(),
     processRunner: new ExecaProcessRunner(),
+    // ARCH-004 / SK-ADR-006: enables rollback-on-failure by default; a user
+    // can still opt out per run with `stackfold init --keep-on-failure`.
+    fileRemover: new NodeFileRemover(),
   },
   opener: new NativeOpener(),
   cwd: () => process.cwd(),
