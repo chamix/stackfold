@@ -1,7 +1,8 @@
-import { resolve as resolvePath } from 'node:path';
+import { posix, resolve as resolvePath, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   detectPluginKind,
+  normalizeRegisteredSource,
   runPluginList,
   runPluginRegister,
   runPluginUnregister,
@@ -286,5 +287,100 @@ describe('runPluginList', () => {
 
     const joined = stdout.join('\n');
     expect(joined).toMatch(/overridden by project/);
+  });
+});
+
+describe('normalizeRegisteredSource', () => {
+  it('leaves an npm-package specifier untouched at either level', () => {
+    expect(normalizeRegisteredSource('some-pkg', 'npm-package', '/work', '/home/u/.stackfoldrc.json', 'global', posix)).toBe('some-pkg');
+    expect(normalizeRegisteredSource('@scope/pkg', 'npm-package', '/work', '/proj/.config/x.json', 'project', posix)).toBe('@scope/pkg');
+  });
+
+  it('global: a relative path is stored absolute, resolved against the cwd at register time', () => {
+    const stored = normalizeRegisteredSource('./plugins/scaffold.json', 'scaffold-json', '/work/a', '/home/u/.stackfoldrc.json', 'global', posix);
+    expect(stored).toBe('/work/a/plugins/scaffold.json');
+  });
+
+  it('global: an already-absolute path is stored verbatim', () => {
+    const stored = normalizeRegisteredSource('/abs/scaffold.json', 'scaffold-json', '/work/a', '/home/u/.stackfoldrc.json', 'global', posix);
+    expect(stored).toBe('/abs/scaffold.json');
+  });
+
+  it('a config that lives in the cwd keeps the source verbatim (existing behaviour unchanged)', () => {
+    expect(normalizeRegisteredSource('./s.json', 'scaffold-json', '/proj', '/proj/.stackfold-pluginsrc.json', 'project', posix)).toBe('./s.json');
+    expect(normalizeRegisteredSource('s.json', 'scaffold-module', '/home/u', '/home/u/.stackfoldrc.json', 'global', posix)).toBe('s.json');
+  });
+
+  it('project: a config in another directory gets a config-relative, "/"-separated path (stays portable)', () => {
+    expect(normalizeRegisteredSource('s.json', 'scaffold-json', '/proj', '/proj/.config/stackfold-pluginsrc.json', 'project', posix)).toBe('../s.json');
+    expect(normalizeRegisteredSource('./tools/s.js', 'scaffold-module', '/proj', '/proj/.config/stackfold-pluginsrc.json', 'project', posix)).toBe('../tools/s.js');
+  });
+
+  it('the stored value resolves back to the same file the user pointed at', () => {
+    const cases = [
+      { cwd: '/work/a', config: '/home/u/.stackfoldrc.json', level: 'global' as const, source: '../b/s.json' },
+      { cwd: '/proj', config: '/proj/.config/c.json', level: 'project' as const, source: './x/s.json' },
+    ];
+    for (const { cwd, config, level, source } of cases) {
+      const stored = normalizeRegisteredSource(source, 'scaffold-json', cwd, config, level, posix);
+      expect(posix.resolve(posix.dirname(config), stored)).toBe(posix.resolve(cwd, source));
+    }
+  });
+
+  describe('Windows path semantics', () => {
+    it('global: a backslash-relative path becomes an absolute drive-letter path', () => {
+      const stored = normalizeRegisteredSource('..\\plugs\\scaffold.json', 'scaffold-json', 'C:\\work\\a', 'C:\\Users\\camilo\\.stackfoldrc.json', 'global', win32);
+      expect(stored).toBe('C:\\work\\plugs\\scaffold.json');
+    });
+
+    it('global: an absolute drive-letter path is stored verbatim', () => {
+      const stored = normalizeRegisteredSource('D:\\p\\s.json', 'scaffold-json', 'C:\\work', 'C:\\Users\\camilo\\.stackfoldrc.json', 'global', win32);
+      expect(stored).toBe('D:\\p\\s.json');
+    });
+
+    it('project: config in a subfolder gets a "/"-separated relative path, never backslashes', () => {
+      const stored = normalizeRegisteredSource('.\\tools\\s.json', 'scaffold-json', 'C:\\proj', 'C:\\proj\\.config\\stackfold-pluginsrc.json', 'project', win32);
+      expect(stored).toBe('../tools/s.json');
+    });
+
+    it('project: a source on another drive than the config stays resolvable (absolute, "/"-separated)', () => {
+      const stored = normalizeRegisteredSource('s.json', 'scaffold-json', 'D:\\other', 'C:\\proj\\.stackfold-pluginsrc.json', 'project', win32);
+      expect(stored).toBe('D:/other/s.json');
+      expect(win32.resolve('C:\\proj', stored)).toBe('D:\\other\\s.json');
+    });
+  });
+});
+
+describe('runPluginRegister — stored source normalisation (C3)', () => {
+  it('global config in another directory than the cwd: stores the absolute path, and list resolves it', async () => {
+    const sourcePath = resolvePath(CWD, 'mi-plugin.json');
+    const globalFile = resolvePath('/home/u/.stackfoldrc.json');
+    const { store, writable } = fakeConfigStore({ global: { filepath: globalFile, entries: {} } });
+    const importSource = fakeImporter({ [sourcePath]: validDefinition('real-id') });
+    const { deps, stdout } = baseDeps({ configStore: store, importSource, fileExists: (p) => p === sourcePath });
+
+    expect(await runPluginRegister('./mi-plugin.json', {}, deps)).toBe(0);
+    expect(writable.global?.entries).toEqual({ 'real-id': { source: sourcePath, kind: 'scaffold-json' } });
+
+    // `list` runs from a different cwd and still resolves the entry.
+    const other = baseDeps({ configStore: store, importSource, cwd: () => resolvePath('/elsewhere') });
+    expect(await runPluginList(other.deps)).toBe(0);
+    expect(other.stdout.join('\n')).toMatch(/real-id .*✓ resolves/);
+    expect(stdout[0]).toMatch(/registered "real-id"/);
+  });
+
+  it('--project with a config in a subfolder: stores a config-relative path that resolves to the same file', async () => {
+    const sourcePath = resolvePath(CWD, 'mi-plugin.json');
+    const projectFile = resolvePath(CWD, '.config/stackfold-pluginsrc.json');
+    const { store, writable } = fakeConfigStore({ project: { filepath: projectFile, entries: {} } });
+    const importSource = fakeImporter({ [sourcePath]: validDefinition('real-id') });
+    const { deps } = baseDeps({ configStore: store, importSource, fileExists: (p) => p === sourcePath });
+
+    expect(await runPluginRegister('mi-plugin.json', { project: true }, deps)).toBe(0);
+    expect(writable.project?.entries).toEqual({ 'real-id': { source: '../mi-plugin.json', kind: 'scaffold-json' } });
+
+    const again = baseDeps({ configStore: store, importSource });
+    expect(await runPluginList(again.deps)).toBe(0);
+    expect(again.stdout.join('\n')).toMatch(/real-id .*✓ resolves/);
   });
 });
