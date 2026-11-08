@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-07
+
+### Added
+
+- **`stackfold init --keep-on-failure`** (ARCH-004): opts out of the new
+  default rollback described below, leaving any partially written files in
+  place — useful when debugging a plugin's own `postWrite` hook.
+
+### Changed
+
+- **`init` now rolls back by default when a file write or a plugin's
+  `postWrite` hook fails** (ARCH-004, SK-ADR-006). Only the files that run
+  itself wrote are removed (in reverse order), then any directories left
+  empty below the target; the target directory itself is never removed.
+  Previously the partial files were left in place and listed for you to
+  clean up by hand. Failed post-actions (such as `npm install`) and
+  `postInit` hooks are unchanged: the project is complete there, so its
+  files are kept. Side effects of hooks and post-actions (`patchFile` edits,
+  `npm install`, `git init`) are not undone.
+- A failing `postWrite`/`postInit` hook now also reports which files had
+  already been written, and `init` prints how many were rolled back and which
+  could not be removed.
+
+### Security
+
+- Raised the `zod` floor to `^4.6.6`, picking up the fix for
+  GHSA-mrhx-c7xc-m3w5 (memory exhaustion when validating very large arrays).
+
 ## [2.2.0] - 2026-11-07
 
 ### Added
