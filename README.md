@@ -82,6 +82,13 @@ offers to open the generated project (folder, or its main file when the
 plugin declares one) with your OS's default handler. Use `--no-open` to
 skip that prompt.
 
+If a file write or a plugin's `postWrite` hook fails after `init` has
+already written some files, it rolls those files back by default — only
+the files this run itself wrote, removed in reverse order, with any empty
+directories left behind pruned (the target directory itself is never
+removed). Pass `--keep-on-failure` to leave the partial files in place
+instead, e.g. while debugging a plugin's own `postWrite` hook.
+
 It also runs **non-interactively**, for scripts and CI:
 
 ```bash

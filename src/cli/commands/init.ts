@@ -2,6 +2,7 @@ import { resolve, join } from 'node:path';
 import { cosmiconfig } from 'cosmiconfig';
 import type { Command } from 'commander';
 import {
+  HookError,
   PostActionError,
   ScaffoldWriteError,
   formatPostAction,
@@ -62,17 +63,29 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
       [] as string[]
     )
     .option('--no-open', "don't prompt to open the project after a successful init")
+    .option(
+      '--keep-on-failure',
+      'on a failed write or postWrite hook, leave the partial files in place instead of rolling them back',
+      false
+    )
     .action(
       async (
         stack?: string,
         directory?: string,
-        options?: { force?: boolean; config?: string; answer?: string[]; open?: boolean }
+        options?: {
+          force?: boolean;
+          config?: string;
+          answer?: string[];
+          open?: boolean;
+          keepOnFailure?: boolean;
+        }
       ) => {
         process.exitCode = await runInit(stack, directory, deps, {
           force: options?.force ?? false,
           config: options?.config,
           answer: options?.answer ?? [],
           open: options?.open ?? true,
+          keepOnFailure: options?.keepOnFailure ?? false,
         });
       }
     );
@@ -83,7 +96,7 @@ export async function runInit(
   stack: string | undefined,
   directory: string | undefined,
   deps: InitCommandDependencies,
-  options?: { force?: boolean; config?: string; answer?: string[]; open?: boolean }
+  options?: { force?: boolean; config?: string; answer?: string[]; open?: boolean; keepOnFailure?: boolean }
 ): Promise<number> {
   const { registry, stdout, stderr } = deps;
 
@@ -121,6 +134,7 @@ export async function runInit(
     const result = await runPlugin(plugin, targetDir, ports, {
       force: options?.force ?? false,
       ignoreEntries: GOVERNANCE_ENTRIES,
+      keepOnFailure: options?.keepOnFailure ?? false,
     });
     stdout(`Scaffolded ${plugin.id} project in ${result.targetDir} (${result.filesWritten.length} files).`);
 
@@ -128,7 +142,14 @@ export async function runInit(
 
     return 0;
   } catch (err) {
-    reportFailure(err, stderr);
+    // ARCH-004/D5: rollback only ever actually ran when a `fileRemover` was
+    // wired AND `--keep-on-failure` was not given — mirrors exactly the
+    // condition `runPlugin()` itself used, so the message shown here never
+    // drifts from what really happened (e.g. a caller with no `fileRemover`
+    // at all must still see today's "remove or keep by hand" wording,
+    // regardless of this flag's value).
+    const rollbackEnabled = Boolean(deps.ports.fileRemover) && !(options?.keepOnFailure ?? false);
+    reportFailure(err, stderr, rollbackEnabled);
     return isPromptAbort(err) ? 130 : 1;
   }
 }
@@ -237,8 +258,15 @@ async function printAvailable(registry: PluginRegistry, write: (line: string) =>
   });
 }
 
-/** Best-effort failure reporting (initial_scaffold.md §3.2 resolution). */
-function reportFailure(err: unknown, write: (line: string) => void): void {
+/**
+ * Best-effort failure reporting (initial_scaffold.md §3.2 resolution),
+ * amended by ARCH-004/D5: when `rollbackEnabled` (a `fileRemover` was wired
+ * and `--keep-on-failure` was not given), a `ScaffoldWriteError` or a
+ * `postWrite` `HookError` reports what was actually rolled back instead of
+ * the legacy "remove or keep by hand" wording — which stays byte-for-byte
+ * unchanged whenever rollback did not run (no port, or the flag was given).
+ */
+function reportFailure(err: unknown, write: (line: string) => void, rollbackEnabled: boolean): void {
   if (isPromptAbort(err)) {
     write('stackfold init: aborted. Nothing was written.');
     return;
@@ -247,9 +275,11 @@ function reportFailure(err: unknown, write: (line: string) => void): void {
   write(`stackfold init: ${err instanceof Error ? err.message : String(err)}`);
 
   if (err instanceof ScaffoldWriteError) {
-    listSection(write, 'Written before the failure (remove or keep by hand):', err.writtenFiles);
+    reportWrittenFiles(write, err.writtenFiles, rollbackEnabled, err.rolledBack, err.rollbackFailures);
     listSection(write, 'Failed:', [err.failedFile]);
     listSection(write, 'Not written:', err.pendingFiles);
+  } else if (err instanceof HookError && err.hookName === 'postWrite') {
+    reportWrittenFiles(write, err.filesWritten, rollbackEnabled, err.rolledBack, err.rollbackFailures);
   } else if (err instanceof PostActionError) {
     listSection(write, 'Completed follow-up actions:', err.completedActions.map(formatPostAction));
     listSection(write, 'Not run (run these by hand in the project directory):', [
@@ -257,6 +287,26 @@ function reportFailure(err: unknown, write: (line: string) => void): void {
       ...err.pendingActions.map(formatPostAction),
     ]);
   }
+}
+
+function reportWrittenFiles(
+  write: (line: string) => void,
+  writtenFiles: string[],
+  rollbackEnabled: boolean,
+  rolledBack: string[],
+  rollbackFailures: { path: string; reason: string }[]
+): void {
+  if (!rollbackEnabled) {
+    listSection(write, 'Written before the failure (remove or keep by hand):', writtenFiles);
+    return;
+  }
+
+  write(`Rolled back ${rolledBack.length} file(s).`);
+  listSection(
+    write,
+    'Could not remove (remove by hand):',
+    rollbackFailures.map((f) => `${f.path} (${f.reason})`)
+  );
 }
 
 function listSection(write: (line: string) => void, title: string, items: string[]): void {

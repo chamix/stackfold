@@ -3,9 +3,9 @@
  * core/ and plugins/ never import node:fs directly.
  */
 import { execSync } from 'node:child_process';
-import { mkdir, readFile as fsReadFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { TargetNotEmptyError, type FileWriter } from '../core/ports.js';
+import { lstat, mkdir, readFile as fsReadFile, readdir, rmdir, unlink, stat, writeFile } from 'node:fs/promises';
+import { dirname, resolve, sep } from 'node:path';
+import { TargetNotEmptyError, type FileRemover, type FileWriter } from '../core/ports.js';
 
 export class NodeFileWriter implements FileWriter {
   /**
@@ -94,6 +94,110 @@ export class NodeFileWriter implements FileWriter {
 
 function isErrnoCode(err: unknown, code: string): boolean {
   return typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === code;
+}
+
+/**
+ * File-system adapter for `FileRemover` (ARCH-004 / SK-ADR-006) — the
+ * orchestrator's own, narrow deletion capability over node:fs. A single
+ * instance is wired once in `cli/index.ts` and reused for every `init` run;
+ * `root` (the run's `targetDir`) is passed in on every call rather than
+ * held as instance state, so containment is always verified against the
+ * run that is actually compensating, never a stale value.
+ *
+ * Security invariants (`.claude/knowledge/security/general.md` —
+ * deletion + path containment):
+ *   - Every path is `resolve()`d and verified to sit strictly *inside*
+ *     `root` before anything touches disk; `root` itself is never a valid
+ *     target (D4 — `targetDir` is never removed, even if mis-passed here).
+ *   - `removeFile` `lstat`s first (never following a symlink) and refuses
+ *     anything that is not a plain file — a symlink or a directory is left
+ *     untouched, not deleted.
+ *   - No recursive delete anywhere: `unlink` for files, `rmdir` for
+ *     directories (which itself refuses a non-empty directory).
+ *   - A missing path is tolerated as a no-op in both methods — the journal
+ *     entry is already gone, which is the desired end state, not a failure.
+ */
+export class NodeFileRemover implements FileRemover {
+  constructor(
+    private readonly options: { maxRetries?: number; retryDelayMs?: number } = {}
+  ) {}
+
+  async removeFile(absolutePath: string, root: string): Promise<void> {
+    const file = resolve(absolutePath);
+    const base = resolve(root);
+    assertContained(file, base);
+
+    const stats = await lstat(file).catch((err) => {
+      if (isErrnoCode(err, 'ENOENT')) return undefined;
+      throw err;
+    });
+    if (stats === undefined) return;
+
+    if (!stats.isFile() || stats.isSymbolicLink()) {
+      throw new Error(`Refusing to remove ${file}: not a regular file (symlink or directory).`);
+    }
+
+    await this.withRetries(async () => {
+      try {
+        await unlink(file);
+      } catch (err) {
+        if (isErrnoCode(err, 'ENOENT')) return;
+        throw err;
+      }
+    });
+  }
+
+  async removeDirIfEmpty(absolutePath: string, root: string): Promise<void> {
+    const dir = resolve(absolutePath);
+    const base = resolve(root);
+    assertContained(dir, base);
+
+    await this.withRetries(async () => {
+      try {
+        await rmdir(dir);
+      } catch (err) {
+        if (isErrnoCode(err, 'ENOENT') || isErrnoCode(err, 'ENOTEMPTY')) return;
+        throw err;
+      }
+    });
+  }
+
+  /**
+   * Bounded retries (D6) for the transient Windows `EBUSY`/`EPERM` a
+   * freshly written file's handle can still briefly hold. Any other error
+   * (containment violation, refusal, genuine permission failure) is never
+   * retried — it is already final.
+   */
+  private async withRetries(fn: () => Promise<void>): Promise<void> {
+    const maxRetries = this.options.maxRetries ?? 5;
+    const retryDelayMs = this.options.retryDelayMs ?? 50;
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fn();
+        return;
+      } catch (err) {
+        const retryable = isErrnoCode(err, 'EBUSY') || isErrnoCode(err, 'EPERM');
+        if (!retryable || attempt >= maxRetries) throw err;
+        await delay(retryDelayMs);
+      }
+    }
+  }
+}
+
+/**
+ * `root` is never itself a valid target (D4) — `absolutePath` must sit
+ * strictly below it, not equal to it.
+ */
+function assertContained(absolutePath: string, root: string): void {
+  const normalizedRoot = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (absolutePath === root || !absolutePath.startsWith(normalizedRoot)) {
+    throw new Error(`Refusing to remove ${absolutePath}: outside root ${root}.`);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
 }
 
 /**

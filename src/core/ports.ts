@@ -70,6 +70,37 @@ export interface ProcessRunner {
 }
 
 /**
+ * New (ARCH-004 / SK-ADR-006): the orchestrator's own, narrow deletion
+ * capability — held by the orchestrator only, never handed to a hook (see
+ * `core/orchestrator.ts`'s `HookPorts` construction). Deliberately not a
+ * method added to `FileWriter` (every hook/fake would gain delete power;
+ * rejected by ISP — see the ADR's "Alternatives considered").
+ *
+ * Both methods take the run's `targetDir` as `root` so a single,
+ * long-lived adapter instance (`infra/fs.ts`'s `NodeFileRemover`,
+ * instantiated once in `cli/index.ts`) can still verify containment per
+ * call without being told, or needing to remember, which run it belongs
+ * to.
+ */
+export interface FileRemover {
+  /**
+   * Removes exactly one file the orchestrator itself wrote. Implementations
+   * must verify `absolutePath` resolves inside `root`, refuse anything that
+   * is not a plain file (symlinks included), and tolerate an
+   * already-missing path as a no-op — never a recursive delete.
+   */
+  removeFile(absolutePath: string, root: string): Promise<void>;
+
+  /**
+   * Removes `absolutePath` only if it is an empty directory, and only if it
+   * resolves strictly inside `root` (never `root` itself — D4: `targetDir`
+   * is never removed). A non-empty or already-missing directory is
+   * tolerated as a no-op, not an error.
+   */
+  removeDirIfEmpty(absolutePath: string, root: string): Promise<void>;
+}
+
+/**
  * Async since Task 049 / SK-ADR-005 (ARCH-002) — the first change to
  * `core/` since ARCH-001. A truly lazy `DynamicPluginRegistry`
  * (`infra/dynamicPluginRegistry.ts`) needs to import/compile an external

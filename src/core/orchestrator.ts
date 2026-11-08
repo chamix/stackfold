@@ -17,8 +17,19 @@
  * Atomicity is deliberately best-effort, not staged+atomic (resolved
  * sub-decision in initial_scaffold.md): on failure we stop and report
  * exactly what was and wasn't done, rather than rolling back.
+ *
+ * ARCH-004 / SK-ADR-006 amends that last sentence for two specific failure
+ * classes (`ScaffoldWriteError`, and a `HookError` raised in `postWrite`):
+ * when the optional `FileRemover` port is supplied and the caller did not
+ * ask to `keepOnFailure`, the orchestrator compensates (Unit of Work-style)
+ * by removing the files *it itself wrote* during this run, in reverse
+ * order, then pruning directories left empty strictly below `targetDir`
+ * (never `targetDir` itself). No other failure class, and no plugin/hook
+ * side effect (patchFile edits, `npm install`, `git init`), is ever undone.
+ * Without the port (or with `keepOnFailure`), behavior is byte-for-byte
+ * today's best-effort reporting.
  */
-import type { FileWriter, ProcessRunner, Prompter } from './ports.js';
+import type { FileRemover, FileWriter, ProcessRunner, Prompter } from './ports.js';
 import type {
   AnswerValue,
   Answers,
@@ -34,7 +45,27 @@ export interface OrchestratorPorts {
   prompter: Prompter;
   fileWriter: FileWriter;
   processRunner: ProcessRunner;
+  /**
+   * Optional (ARCH-004, D3). Absent on every pre-ARCH-004 caller/fake —
+   * rollback is then skipped entirely and behavior is unchanged
+   * (Invariant 5, backward compatible). Held by the orchestrator only;
+   * never forwarded into `HookPorts` (Invariant A).
+   */
+  fileRemover?: FileRemover;
 }
+
+/** One rollback compensation's outcome — attached to the triggering error. */
+export interface RollbackOutcome {
+  rolledBack: string[];
+  rollbackFailures: RollbackFailure[];
+}
+
+export interface RollbackFailure {
+  path: string;
+  reason: string;
+}
+
+const NO_ROLLBACK: RollbackOutcome = { rolledBack: [], rollbackFailures: [] };
 
 export interface ScaffoldResult {
   targetDir: string;
@@ -98,7 +129,14 @@ export class ScaffoldWriteError extends Error {
     public readonly writtenFiles: string[],
     public readonly failedFile: string,
     public readonly pendingFiles: string[],
-    cause: unknown
+    cause: unknown,
+    /**
+     * ARCH-004/D5: populated only when a `FileRemover` was supplied and
+     * `keepOnFailure` was not set — `[]` otherwise (legacy shape,
+     * unchanged message/other fields).
+     */
+    public readonly rolledBack: string[] = [],
+    public readonly rollbackFailures: RollbackFailure[] = []
   ) {
     super(
       `Failed to write "${failedFile}" into ${targetDir}: ${errorMessage(cause)}. ` +
@@ -125,7 +163,17 @@ export class HookError extends Error {
   constructor(
     public readonly hookName: HookName,
     public readonly handlerIndex: number,
-    cause: unknown
+    cause: unknown,
+    /**
+     * ARCH-004/D5: the files the orchestrator had written by the time this
+     * hook ran — `[]` for `preInit` (runs before any write), the full
+     * written list for `postWrite`/`postInit`. Previously `HookError` gave
+     * no visibility into this at all.
+     */
+    public readonly filesWritten: string[] = [],
+    /** Populated only for a `postWrite` failure with rollback actually run. */
+    public readonly rolledBack: string[] = [],
+    public readonly rollbackFailures: RollbackFailure[] = []
   ) {
     super(`Hook "${hookName}" handler #${handlerIndex} failed: ${errorMessage(cause)}`, { cause });
     this.name = 'HookError';
@@ -159,7 +207,7 @@ export async function runPlugin(
   plugin: StackfoldPlugin,
   targetDir: string,
   ports: OrchestratorPorts,
-  options?: { force?: boolean; ignoreEntries?: readonly string[] }
+  options?: { force?: boolean; ignoreEntries?: readonly string[]; keepOnFailure?: boolean }
 ): Promise<ScaffoldResult> {
   const questions = plugin.questions();
   assertValidQuestions(plugin.id, questions);
@@ -167,19 +215,34 @@ export async function runPlugin(
   const rawAnswers = await ports.prompter.ask(questions);
   const answers = resolveAnswers(questions, rawAnswers);
 
-  // `HookPorts` is structurally identical to `OrchestratorPorts` — passed
-  // straight through, no new object needed (Invariant A: the hook gets
-  // exactly these 3 ports, nothing more).
-  await runHooks('preInit', plugin.hooks, ports, answers);
+  // ARCH-004 Invariant A: hooks get a NEW object carrying exactly these 3
+  // ports — never `ports` itself, so a hook can never reach `fileRemover`
+  // (the orchestrator's own, non-negotiable deletion capability).
+  const hookPorts: HookPorts = {
+    prompter: ports.prompter,
+    fileWriter: ports.fileWriter,
+    processRunner: ports.processRunner,
+  };
+
+  await runHooks('preInit', plugin.hooks, hookPorts, answers, []);
 
   const blueprint = plugin.buildBlueprint(answers);
   const plannedFiles = planFiles(plugin.id, targetDir, blueprint);
 
   await ports.fileWriter.ensureEmptyDir(targetDir, options);
 
-  const filesWritten = await writeFiles(targetDir, plannedFiles, ports.fileWriter);
+  let filesWritten: string[];
+  try {
+    filesWritten = await writeFiles(targetDir, plannedFiles, ports.fileWriter);
+  } catch (err) {
+    throw await attachRollback(err, targetDir, ports, options?.keepOnFailure ?? false);
+  }
 
-  await runHooks('postWrite', plugin.hooks, ports, answers);
+  try {
+    await runHooks('postWrite', plugin.hooks, hookPorts, answers, filesWritten);
+  } catch (err) {
+    throw await attachRollback(err, targetDir, ports, options?.keepOnFailure ?? false);
+  }
 
   const postActionsRun = await runPostActions(
     targetDir,
@@ -188,7 +251,7 @@ export async function runPlugin(
     ports.processRunner
   );
 
-  await runHooks('postInit', plugin.hooks, ports, answers);
+  await runHooks('postInit', plugin.hooks, hookPorts, answers, filesWritten);
 
   return {
     targetDir,
@@ -196,6 +259,118 @@ export async function runPlugin(
     postActionsRun,
     ...(blueprint.mainFile !== undefined ? { mainFile: blueprint.mainFile } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// ARCH-004 / SK-ADR-006 — rollback on a D1 failure class
+// ---------------------------------------------------------------------------
+
+/**
+ * Only `ScaffoldWriteError` and a `HookError` raised in `postWrite` are D1
+ * rollback triggers. Everything else (`InvalidAnswersError`,
+ * `InvalidBlueprintError`, a `preInit`/`postInit` `HookError`,
+ * `PostActionError`, an `ensureEmptyDir()` rejection) is returned
+ * unchanged — the output there is either untouched or already complete,
+ * and the existing "do this by hand" UX is deliberate (see the ADR).
+ *
+ * When this IS a trigger but rollback does not actually run (no
+ * `fileRemover`, or `keepOnFailure`), the error is still replaced — never
+ * mutated — with an equivalent one carrying explicit, empty
+ * `rolledBack`/`rollbackFailures`, so callers never have to special-case
+ * "undefined" vs "legacy, nothing attempted".
+ */
+async function attachRollback(
+  err: unknown,
+  targetDir: string,
+  ports: OrchestratorPorts,
+  keepOnFailure: boolean
+): Promise<unknown> {
+  if (err instanceof ScaffoldWriteError) {
+    const outcome = await runCompensation(err.writtenFiles, targetDir, ports, keepOnFailure);
+    return new ScaffoldWriteError(
+      err.targetDir,
+      err.writtenFiles,
+      err.failedFile,
+      err.pendingFiles,
+      err.cause,
+      outcome.rolledBack,
+      outcome.rollbackFailures
+    );
+  }
+
+  if (err instanceof HookError && err.hookName === 'postWrite') {
+    const outcome = await runCompensation(err.filesWritten, targetDir, ports, keepOnFailure);
+    return new HookError(
+      err.hookName,
+      err.handlerIndex,
+      err.cause,
+      err.filesWritten,
+      outcome.rolledBack,
+      outcome.rollbackFailures
+    );
+  }
+
+  return err;
+}
+
+async function runCompensation(
+  journal: string[],
+  targetDir: string,
+  ports: OrchestratorPorts,
+  keepOnFailure: boolean
+): Promise<RollbackOutcome> {
+  if (!ports.fileRemover || keepOnFailure) return NO_ROLLBACK;
+  return compensate(targetDir, journal, ports.fileRemover);
+}
+
+/**
+ * Removes journaled files in reverse order (D4/Invariant 2), then prunes
+ * directories left empty strictly below `targetDir`, deepest first —
+ * `targetDir` itself is never a candidate. A failure removing one file
+ * never stops the rest of the journal from being attempted, and is
+ * reported in `rollbackFailures`, never thrown past this function
+ * (Invariant 4: rollback failing never masks the original error).
+ */
+async function compensate(
+  targetDir: string,
+  journal: string[],
+  fileRemover: FileRemover
+): Promise<RollbackOutcome> {
+  const base = stripTrailingSeparators(targetDir);
+  const rolledBack: string[] = [];
+  const rollbackFailures: RollbackFailure[] = [];
+  const candidateDirs = new Set<string>();
+
+  for (const relativePath of [...journal].reverse()) {
+    const segments = relativePath.split(/[\\/]/);
+    const absolutePath = `${base}/${segments.join('/')}`;
+
+    try {
+      await fileRemover.removeFile(absolutePath, targetDir);
+      rolledBack.push(relativePath);
+
+      let dir = base;
+      for (const segment of segments.slice(0, -1)) {
+        dir = `${dir}/${segment}`;
+        candidateDirs.add(dir);
+      }
+    } catch (cause) {
+      rollbackFailures.push({ path: relativePath, reason: errorMessage(cause) });
+    }
+  }
+
+  const deepestFirst = [...candidateDirs].sort(
+    (a, b) => b.split('/').length - a.split('/').length
+  );
+  for (const dir of deepestFirst) {
+    // Best-effort pruning only — a non-empty or already-missing directory
+    // is expected and not a failure; any other adapter-level error is
+    // swallowed too (an empty leftover directory is an explicitly accepted
+    // outcome, D4).
+    await fileRemover.removeDirIfEmpty(dir, targetDir).catch(() => undefined);
+  }
+
+  return { rolledBack, rollbackFailures };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +392,8 @@ async function runHooks(
   hookName: HookName,
   hooks: StackfoldPlugin['hooks'],
   ports: HookPorts,
-  answers: Answers
+  answers: Answers,
+  filesWritten: string[]
 ): Promise<void> {
   const handlers = hooks?.[hookName];
   if (!handlers || handlers.length === 0) return;
@@ -226,7 +402,7 @@ async function runHooks(
     try {
       await handler(ports, answers);
     } catch (cause) {
-      throw new HookError(hookName, index, cause);
+      throw new HookError(hookName, index, cause, filesWritten);
     }
   }
 }
