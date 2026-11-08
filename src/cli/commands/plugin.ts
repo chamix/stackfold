@@ -16,6 +16,7 @@
  * *registered* entry at both config levels, including a broken one (✗ with
  * its real error), and marks which entry wins a same-id collision.
  */
+import * as nodePath from 'node:path';
 import { extname, resolve as resolvePath } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Command } from 'commander';
@@ -111,6 +112,46 @@ export function detectPluginKind(
   return 'npm-package';
 }
 
+/**
+ * What `register` should store as `source` so the entry resolves to the
+ * *same file* later. A registered local source is resolved against the
+ * **config file's directory** (SK-ADR-005 — a committed project config
+ * stays portable), whereas the user typed it relative to the **cwd**; for a
+ * global config (`~/.stackfoldrc.json`) those two bases are unrelated, so a
+ * raw `./scaffold.json` stored verbatim pointed at the home directory.
+ *
+ *   - `npm-package`: never touched — a bare specifier, not a path.
+ *   - Already resolves to the same file against the config directory
+ *     (absolute input, or config living in the cwd): stored verbatim, so
+ *     existing behaviour and entries are unchanged.
+ *   - Otherwise: global → the absolute path; project → a path relative to
+ *     the config directory, `/`-separated (keeps the project config
+ *     portable and Windows-safe; a different drive yields an absolute path).
+ *
+ * `pathApi` is injectable so Windows semantics (drive letters, backslashes)
+ * are unit-testable from any host.
+ */
+/** The slice of `node:path` `normalizeRegisteredSource` needs — `path.win32`/`path.posix` both fit. */
+export type PathApi = Pick<typeof nodePath, 'resolve' | 'dirname' | 'relative' | 'sep'>;
+
+export function normalizeRegisteredSource(
+  source: string,
+  kind: PluginKind,
+  cwd: string,
+  configFilepath: string,
+  level: PluginConfigLevel,
+  pathApi: PathApi = nodePath
+): string {
+  if (kind === 'npm-package') return source;
+
+  const absolute = pathApi.resolve(cwd, source);
+  const configDir = pathApi.dirname(configFilepath);
+  if (pathApi.resolve(configDir, source) === absolute) return source;
+
+  if (level === 'global') return absolute;
+  return pathApi.relative(configDir, absolute).split(pathApi.sep).join('/');
+}
+
 // ---------------------------------------------------------------------------
 // register
 // ---------------------------------------------------------------------------
@@ -147,7 +188,8 @@ export async function runPluginRegister(
   const level: PluginConfigLevel = options.project ? 'project' : 'global';
   const filepath = await store.resolveWriteFilepath(level, cwd);
   const entries = await store.readEntries(filepath);
-  const updated: Record<string, PluginConfigEntry> = { ...entries, [plugin.id]: { source, kind } };
+  const storedSource = normalizeRegisteredSource(source, kind, cwd, filepath, level);
+  const updated: Record<string, PluginConfigEntry> = { ...entries, [plugin.id]: { source: storedSource, kind } };
   await store.writeEntries(filepath, updated);
 
   stdout(`stackfold plugin register: registered "${plugin.id}" (${kind}) in ${filepath}`);

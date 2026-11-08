@@ -16,6 +16,14 @@ npx stackfold init electron-ts ./my-app
 
 Requires Node.js **22+**.
 
+> **npm 12 and install scripts.** npm 12 blocks dependency install scripts
+> unless they are approved in `allowScripts`, so a global install may print
+> `1 package had install scripts blocked ... esbuild`. It is harmless:
+> `esbuild` (pulled in by the `tsx` runtime dependency) takes its binary
+> from the platform-specific package npm installs anyway, and `install.js`
+> is only an optimisation — stackfold works without approving it. To
+> silence the warning once, use `npm install -g stackfold --allow-scripts=esbuild`.
+
 ## Quick start
 
 ```bash
@@ -148,6 +156,12 @@ Config lives at two levels, both resolved via cosmiconfig:
   current directory; wins over the global config on a same-id
   collision.
 
+A relative local path is resolved against the directory you run
+`register` from, and the entry is stored so it keeps pointing at that same
+file: an absolute path in the global config, a path relative to the config
+file in a project config (so a committed project config stays portable).
+npm package specifiers are stored as given.
+
 A built-in plugin always wins an id collision against an external one.
 A broken external entry (deleted file, uninstalled package, failed
 validation) is skipped with a warning rather than breaking `list`/`init`
@@ -221,6 +235,17 @@ file `plugin-scaffold`/`scaffold synth` produce for you, and it's fully
 supported by `stackfold plugin register`/`list`/`info`/`init`. You're
 just skipping the TS-authoring step (and its `validate` closures) and
 writing the compiled artifact directly.
+
+### Package entry points
+
+`stackfold` is a CLI first. Its only programmatic entry point is
+`stackfold/authoring` (`defineScaffold`, `file`, `loadTemplate`, ...), the
+surface a TS-authored plugin imports. The `exports` map is closed on
+purpose (SK-ADR-005), so `import 'stackfold'` and deep imports such as
+`stackfold/dist/...` or `stackfold/package.json` fail with
+`ERR_PACKAGE_PATH_NOT_EXPORTED`. That keeps `dist/` free to change between
+releases; if you need something that isn't exported, open an issue instead
+of reaching into `dist/`.
 
 ### The `ScaffoldDefinition` shape
 
