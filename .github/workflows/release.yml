@@ -48,3 +48,45 @@ jobs:
           else
             npm publish
           fi
+
+  # Separate job so the publish job keeps read-only repo access: only this one
+  # holds contents: write, and it runs no package code (no npm ci/scripts).
+  github-release:
+    name: create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+
+          # Notes = this version's section of CHANGELOG.md, if there is one.
+          awk -v h="## [${version}]" '
+            index($0, h) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+
+          flags=(--verify-tag)
+          if [[ "$version" == *-* ]]; then
+            flags+=(--prerelease)
+          else
+            flags+=(--latest)
+          fi
+
+          if grep -q '[^[:space:]]' notes.md; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md "${flags[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+              --generate-notes "${flags[@]}"
+          fi
