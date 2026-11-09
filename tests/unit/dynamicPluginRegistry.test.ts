@@ -129,6 +129,76 @@ describe('loadPluginFromSource', () => {
       loadPluginFromSource('broken.js', 'scaffold-module', BASE_DIR, evaluator, importSource)
     ).rejects.toThrow(/thisActionDoesNotExist/);
   });
+
+  // SYNTH-001 / SK-ADR-009 Decision 7 (D8) — the ergonomics guard: a
+  // `scaffold-json` carrying a non-empty `$synth.droppedClosures` is
+  // rejected BEFORE compileScaffold() ever runs, with a message naming the
+  // module to register instead (or how to re-synth, when no module was
+  // emitted). Only `scaffold-json` is affected — `scaffold-module` and
+  // `npm-package` never go through this check at all.
+  describe('D8 guard — $synth.droppedClosures on a scaffold-json source', () => {
+    function fakeImporterReturning(definition: unknown) {
+      return async () => ({ default: definition });
+    }
+
+    it('rejects a scaffold.json with $synth.droppedClosures and a module hint, naming that module', async () => {
+      const marked = {
+        ...validDefinition('marked'),
+        $synth: { droppedClosures: ['questions.name.validate'], module: 'scaffold.js' },
+      };
+      const importSource = fakeImporterReturning(marked);
+
+      await expect(
+        loadPluginFromSource('marked.json', 'scaffold-json', BASE_DIR, evaluator, importSource)
+      ).rejects.toThrow(/scaffold\.js/);
+    });
+
+    it('rejects a scaffold.json with $synth.droppedClosures and no module hint, pointing at re-running synth', async () => {
+      const marked = {
+        ...validDefinition('marked-no-module'),
+        $synth: { droppedClosures: ['questions.name.validate'] },
+      };
+      const importSource = fakeImporterReturning(marked);
+
+      await expect(
+        loadPluginFromSource('marked.json', 'scaffold-json', BASE_DIR, evaluator, importSource)
+      ).rejects.toThrow(/--no-emit-js|scaffold synth/);
+    });
+
+    it('a scaffold.json with no $synth key at all is completely unaffected', async () => {
+      const unmarked = validDefinition('unmarked');
+      const importSource = fakeImporterReturning(unmarked);
+
+      const plugin = await loadPluginFromSource('unmarked.json', 'scaffold-json', BASE_DIR, evaluator, importSource);
+      expect(plugin.id).toBe('unmarked');
+    });
+
+    it('a scaffold.json with an empty $synth.droppedClosures array is unaffected (nothing was actually dropped)', async () => {
+      const emptyMarker = { ...validDefinition('empty-marker'), $synth: { droppedClosures: [] } };
+      const importSource = fakeImporterReturning(emptyMarker);
+
+      const plugin = await loadPluginFromSource('empty-marker.json', 'scaffold-json', BASE_DIR, evaluator, importSource);
+      expect(plugin.id).toBe('empty-marker');
+    });
+
+    it('the guard never applies to scaffold-module or npm-package sources, even carrying the same marker', async () => {
+      const marked = {
+        ...validDefinition('marked-module'),
+        $synth: { droppedClosures: ['questions.name.validate'], module: 'scaffold.js' },
+      };
+      const importSource = fakeImporterReturning(marked);
+
+      const plugin = await loadPluginFromSource('marked.js', 'scaffold-module', BASE_DIR, evaluator, importSource);
+      expect(plugin.id).toBe('marked-module');
+    });
+
+    it('compileScaffold() itself still accepts (ignores) a plain object carrying an extraneous $synth key', async () => {
+      const { compileScaffold } = await import('../../src/core/authoring.js');
+      const marked = { ...validDefinition('ignored-key'), $synth: { droppedClosures: [], module: 'scaffold.js' } };
+
+      expect(() => compileScaffold(marked as unknown as ScaffoldDefinition, evaluator)).not.toThrow();
+    });
+  });
 });
 
 describe('DynamicPluginRegistry', () => {

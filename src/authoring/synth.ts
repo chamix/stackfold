@@ -57,13 +57,15 @@
  * partial `scaffold.json` behind; a pre-existing file at that path (if
  * any) is left exactly as it was unless the rename actually succeeds.
  */
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { compileScaffold, type ScaffoldDefinition } from '../core/authoring.js';
 import type { ExpressionEvaluator } from '../core/ports.js';
 import type { Answers, QuestionDefinition } from '../core/types.js';
 import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';
+import { GENERATED_MODULE_BANNER, realEsbuildEmitter, type ScaffoldModuleEmitter } from './emitModule.js';
 
 // ---------------------------------------------------------------------------
 // D6 — top-level structural validation (new; no prior full-definition schema)
@@ -175,6 +177,10 @@ export interface SynthOptions {
 
 export interface SynthResult {
   outputPath: string;
+  /** New (SYNTH-001) — `questions.<id>.validate`-shaped dotted paths to every closure found, `[]` when none. */
+  droppedClosures: string[];
+  /** New (SYNTH-001) — set only when a `scaffold.js` module was actually written alongside `scaffold.json`. */
+  modulePath?: string;
 }
 
 /**
@@ -184,16 +190,117 @@ export interface SynthResult {
  * a stackfold checkout root; see this module's header comment). Throws —
  * without writing anything — on any failure; see this module's header
  * comment for the invariant that guarantees that.
+ *
+ * JSON-only, synchronous — unchanged since before SYNTH-001 (same exact
+ * behavior every existing caller/test already depends on, including the
+ * original "closures silently vanish in the JSON" behavior this whole
+ * task exists to stop being the *only* path). Real callers (`scaffold
+ * synth`'s CLI command) use `synthWithModule()` below instead, which is
+ * genuinely async (a real bundler run + a real verifying `import()`) and
+ * therefore cannot share this function's synchronous-throw contract.
  */
 export function synth(definition: ScaffoldDefinition, options: SynthOptions = {}): SynthResult {
   const outDir = options.outDir ?? process.cwd();
   const evaluator = options.evaluator ?? new JsonLogicExpressionEvaluator();
 
+  validateStructurally(definition);
+  smokeTest(definition, evaluator);
+
+  const outputPath = resolve(outDir, 'scaffold.json');
+  const json = `${canonicalJson(definition)}\n`;
+  writeJsonAtomic(outputPath, json);
+
+  return { outputPath, droppedClosures: collectClosurePaths(definition) };
+}
+
+// ---------------------------------------------------------------------------
+// synthWithModule — SYNTH-001 / SK-ADR-009: the full JSON+JS orchestration
+// ---------------------------------------------------------------------------
+
+export interface SynthWithModuleOptions extends SynthOptions {
+  /**
+   * Absolute path to the author's `scaffold.ts` — required only when
+   * closures are found AND `emitJs` isn't `false` (the only case that
+   * actually needs to bundle something). Ignored otherwise.
+   */
+  scaffoldTsPath?: string;
+  /** Defaults to `true` (SK-ADR-009 Decision 2's default: emit when closures exist). */
+  emitJs?: boolean;
+  /** Injectable (DIP) — defaults to `realEsbuildEmitter`. `tests/unit/authoring-synth.test.ts`'s own fakes return real, hand-written ESM text. */
+  emitter?: ScaffoldModuleEmitter;
+  /** Defaults to `(line) => console.error(line)` — used for the `--no-emit-js` degradation warning and the foreign-`scaffold.js` stale warning. */
+  stderr?: (line: string) => void;
+}
+
+/**
+ * The full orchestration `src/cli/commands/scaffoldSynth.ts` actually
+ * calls (SK-ADR-009 Decisions 1-5): detects closures (D3), and when found
+ * either degrades to a warning (`emitJs: false`) or bundles+verifies+
+ * writes the canonical `scaffold.json`+`scaffold.js` pair (D1/D4), with
+ * the `$synth` marker (D8) on the JSON whenever closures were dropped
+ * from it. Never leaves a partial pair — see `writeModulePairAtomic()`'s
+ * own comment for the write-ordering invariant.
+ */
+export async function synthWithModule(definition: ScaffoldDefinition, options: SynthWithModuleOptions = {}): Promise<SynthResult> {
+  const outDir = options.outDir ?? process.cwd();
+  const evaluator = options.evaluator ?? new JsonLogicExpressionEvaluator();
+  const emitJs = options.emitJs ?? true;
+  const emitter = options.emitter ?? realEsbuildEmitter;
+  const stderr = options.stderr ?? ((line: string) => console.error(line));
+
+  validateStructurally(definition);
+  smokeTest(definition, evaluator);
+
+  const jsonPath = resolve(outDir, 'scaffold.json');
+  const jsPath = resolve(outDir, 'scaffold.js');
+  const droppedClosures = collectClosurePaths(definition);
+
+  if (droppedClosures.length === 0) {
+    handleStaleModule(jsPath, stderr);
+    const json = `${canonicalJson(definition)}\n`;
+    writeJsonAtomic(jsonPath, json);
+    return { outputPath: jsonPath, droppedClosures: [] };
+  }
+
+  if (!emitJs) {
+    stderr(
+      `stackfold scaffold synth: dropped validate closures (re-run without --no-emit-js to keep them): ${droppedClosures.join(', ')}`
+    );
+    const json = `${serializeWithSynthMarker(definition, droppedClosures, undefined)}\n`;
+    writeJsonAtomic(jsonPath, json);
+    return { outputPath: jsonPath, droppedClosures };
+  }
+
+  if (!options.scaffoldTsPath) {
+    throw new Error('synth: scaffoldTsPath is required to emit scaffold.js (pass emitJs: false to skip emission)');
+  }
+
+  // Never overwrite a `scaffold.js` this tool did not generate (e.g. an author's
+  // hand-written workaround) — checked before anything is emitted or staged.
+  assertModuleNotForeign(jsPath);
+
+  const bundleText = await emitter.emit(options.scaffoldTsPath);
+  const jsonWithoutMarker = canonicalJson(definition);
+  const stagedModulePath = await verifyModule({ bundleText, outDir, droppedClosures, evaluator, jsonWithoutMarker });
+
+  const jsonWithMarker = `${serializeWithSynthMarker(definition, droppedClosures, 'scaffold.js')}\n`;
+  writeModulePairAtomic(jsPath, stagedModulePath, jsonPath, jsonWithMarker);
+
+  return { outputPath: jsonPath, modulePath: jsPath, droppedClosures };
+}
+
+// ---------------------------------------------------------------------------
+// Shared validation/smoke-test helpers (used by both synth() and synthWithModule())
+// ---------------------------------------------------------------------------
+
+function validateStructurally(definition: ScaffoldDefinition): void {
   const parsed = scaffoldDefinitionSchema.safeParse(definition);
   if (!parsed.success) {
     throw new Error(`synth: invalid ScaffoldDefinition "${describeId(definition)}": ${formatZodIssues(parsed.error)}`);
   }
+}
 
+function smokeTest(definition: ScaffoldDefinition, evaluator: ExpressionEvaluator): void {
   try {
     const plugin = compileScaffold(definition, evaluator);
     // See this module's header comment ("Smoke-test scope"): exercising
@@ -204,12 +311,229 @@ export function synth(definition: ScaffoldDefinition, options: SynthOptions = {}
   } catch (err) {
     throw new Error(`synth: compileScaffold() smoke test failed for "${definition.id}": ${toMessage(err)}`);
   }
+}
 
-  const outputPath = resolve(outDir, 'scaffold.json');
-  const json = `${JSON.stringify(definition, null, 2)}\n`;
-  writeJsonAtomic(outputPath, json);
+function canonicalJson(definition: ScaffoldDefinition): string {
+  return JSON.stringify(definition, null, 2);
+}
 
-  return { outputPath };
+/**
+ * `$synth` marker (D8): parses the plain `JSON.stringify(definition)`
+ * round-trip (which already drops every function value — the exact
+ * mechanism this whole task exists to stop being silent about) and adds
+ * the top-level `$synth` key naming every dropped closure path plus the
+ * module to register instead (`module` omitted when `--no-emit-js`
+ * suppressed emission).
+ */
+function serializeWithSynthMarker(definition: ScaffoldDefinition, droppedClosures: string[], moduleFilename: string | undefined): string {
+  const plain = JSON.parse(canonicalJson(definition)) as Record<string, unknown>;
+  const marker: Record<string, unknown> = { droppedClosures };
+  if (moduleFilename !== undefined) marker.module = moduleFilename;
+  return JSON.stringify({ $synth: marker, ...plain }, null, 2);
+}
+
+// ---------------------------------------------------------------------------
+// D3 — generic/defensive closure detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Deep-walks `value`, collecting a dotted path for every function value
+ * found. Today this only ever finds `questions.<id>.validate`, but the
+ * walk itself is generic — any future closure anywhere in a
+ * `ScaffoldDefinition` is found the same way, with no special-casing.
+ * Array elements carrying a string `id` are labeled by that `id` (so
+ * `questions[].validate` reads as `questions.<id>.validate`, per SK-ADR-009);
+ * elements without one fall back to their numeric index.
+ */
+export function collectClosurePaths(value: unknown, path: string[] = []): string[] {
+  if (typeof value === 'function') return [path.join('.')];
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => collectClosurePaths(item, [...path, arrayItemLabel(item, index)]));
+  }
+  if (isPlainRecord(value)) {
+    return Object.entries(value).flatMap(([key, v]) => collectClosurePaths(v, [...path, key]));
+  }
+  return [];
+}
+
+function arrayItemLabel(item: unknown, index: number): string {
+  return isPlainRecord(item) && typeof item.id === 'string' ? item.id : String(index);
+}
+
+/** Mirrors `collectClosurePaths()`'s own id-vs-index labeling, so a path it produced can be re-resolved against a (re-)imported object. */
+function getAtPath(value: unknown, segments: string[]): unknown {
+  let current: unknown = value;
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      const byId = current.find((item) => isPlainRecord(item) && item.id === segment);
+      current = byId !== undefined ? byId : current[Number(segment)];
+    } else if (isPlainRecord(current)) {
+      current = current[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+// ---------------------------------------------------------------------------
+// D4 — module verification (write-to-temp .mjs, real import(), checks)
+// ---------------------------------------------------------------------------
+
+interface VerifyModuleParams {
+  bundleText: string;
+  outDir: string;
+  droppedClosures: string[];
+  evaluator: ExpressionEvaluator;
+  /** `canonicalJson(definition)` — the exact text the final `scaffold.json` will contain, minus the `$synth` key. */
+  jsonWithoutMarker: string;
+}
+
+/**
+ * Writes `bundleText` to a temp `.mjs` file *in `outDir`* (so
+ * `import.meta.dirname`/bare-specifier resolution inside the bundle
+ * matches where `scaffold.js` will actually end up, and so ESM parsing is
+ * guaranteed regardless of the nearest `package.json`'s `"type"`), then
+ * `import()`s it for real (`pathToFileURL` — never a bare path string;
+ * Windows file-URL correctness matters here) and runs every SK-ADR-009
+ * Decision 4 check. On success, returns that temp file's own path
+ * unchanged (the caller renames it into place — no second write). On any
+ * failure, deletes the temp file and re-throws, so nothing is ever written
+ * anywhere else.
+ */
+async function verifyModule(params: VerifyModuleParams): Promise<string> {
+  const { bundleText, outDir, droppedClosures, evaluator, jsonWithoutMarker } = params;
+  const tmpPath = join(outDir, `.scaffold.js.${process.pid}.${Date.now()}.tmp.mjs`);
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(tmpPath, bundleText, 'utf8');
+
+  try {
+    const imported = (await import(pathToFileURL(tmpPath).href)) as { default?: unknown };
+    const importedDefault = imported.default;
+
+    const parsed = scaffoldDefinitionSchema.safeParse(importedDefault);
+    if (!parsed.success) {
+      throw new Error(`synth: emitted scaffold.js default export failed structural validation: ${formatZodIssues(parsed.error)}`);
+    }
+
+    for (const closurePath of droppedClosures) {
+      const value = getAtPath(importedDefault, closurePath.split('.'));
+      if (typeof value !== 'function') {
+        throw new Error(`synth: emitted scaffold.js lost the closure expected at "${closurePath}" (parity check)`);
+      }
+    }
+
+    const actualJson = JSON.stringify(importedDefault, null, 2);
+    if (actualJson !== jsonWithoutMarker) {
+      throw new Error(
+        'synth: parity check failed — scaffold.js\'s default export does not JSON.stringify to the same content as scaffold.json (excluding $synth)'
+      );
+    }
+
+    smokeTest(importedDefault as ScaffoldDefinition, evaluator);
+  } catch (err) {
+    unlinkIfExists(tmpPath);
+    throw err instanceof Error ? err : new Error(toMessage(err));
+  }
+
+  return tmpPath;
+}
+
+// ---------------------------------------------------------------------------
+// Atomic writes + stale handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Renames the already-verified, already-on-disk staged module
+ * (`stagedModulePath`, from `verifyModule()`) into `jsPath` first, then
+ * writes+renames `scaffold.json` (temp-then-rename, same pattern
+ * `writeJsonAtomic()` already uses). Rename order matters (SK-ADR-009
+ * Decision 3's edge-case invariant): if the second rename fails, the
+ * thrown error explicitly names *both* paths as now-inconsistent, since a
+ * human now needs to reconcile them — a fresh `scaffold.js` sitting next
+ * to a stale/missing `scaffold.json`. Never leaves a `.tmp`/`.tmp.mjs`
+ * file behind on any path through this function.
+ */
+function writeModulePairAtomic(jsPath: string, stagedModulePath: string, jsonPath: string, jsonContent: string): void {
+  try {
+    renameSync(stagedModulePath, jsPath);
+  } catch (err) {
+    unlinkIfExists(stagedModulePath);
+    throw new Error(`synth: failed to write "${jsPath}": ${toMessage(err)}`);
+  }
+
+  const jsonDir = dirname(jsonPath);
+  const jsonTmpPath = join(jsonDir, `.scaffold.json.${process.pid}.${Date.now()}.tmp`);
+  try {
+    writeFileSync(jsonTmpPath, jsonContent, 'utf8');
+    renameSync(jsonTmpPath, jsonPath);
+  } catch (err) {
+    unlinkIfExists(jsonTmpPath);
+    throw new Error(
+      `synth: wrote "${jsPath}" but failed to write "${jsonPath}" — these two files are now inconsistent and need ` +
+        `manual reconciliation: ${toMessage(err)}`
+    );
+  }
+}
+
+/**
+ * SK-ADR-009 Decision 4 — stale-handling: a pre-existing `scaffold.js`
+ * whose first line is exactly `GENERATED_MODULE_BANNER` is `synth`'s own
+ * previous output, now stale (this run found no closures), and is
+ * deleted. A `scaffold.js` without that exact first line is never
+ * `synth`'s own — left completely untouched, with a warning.
+ */
+function handleStaleModule(jsPath: string, stderr: (line: string) => void): void {
+  const firstLine = readFirstLine(jsPath);
+  if (firstLine === undefined) return;
+
+  if (firstLine === GENERATED_MODULE_BANNER) {
+    unlinkSync(jsPath);
+  } else {
+    stderr(`stackfold scaffold synth: "${jsPath}" exists but was not generated by synth — leaving it untouched.`);
+  }
+}
+
+/**
+ * SK-ADR-009 Decision 4 (extended to the closures path) — a pre-existing
+ * `scaffold.js` whose first line is not `GENERATED_MODULE_BANNER` was not
+ * written by `synth` (typically an author's hand-written workaround) and is
+ * never overwritten: this throws *before* anything is emitted, staged or
+ * written, so the foreign file and any existing `scaffold.json` stay exactly
+ * as they were. A banner-marked file (synth's own earlier output) or no file
+ * at all passes.
+ */
+function assertModuleNotForeign(jsPath: string): void {
+  const firstLine = readFirstLine(jsPath);
+  if (firstLine === undefined || firstLine === GENERATED_MODULE_BANNER) return;
+  throw new Error(
+    `synth: "${jsPath}" already exists and was not generated by synth — refusing to overwrite it. ` +
+      'Move it aside, or re-run with --no-emit-js to skip emitting scaffold.js.'
+  );
+}
+
+/** First line of `path`, or `undefined` when the file does not exist. */
+function readFirstLine(path: string): string | undefined {
+  let content: string;
+  try {
+    content = readFileSync(path, 'utf8');
+  } catch (err) {
+    if (isEnoent(err)) return undefined;
+    throw err;
+  }
+  return content.split(/\r?\n/, 1)[0];
+}
+
+function unlinkIfExists(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
+  }
+}
+
+function isEnoent(err: unknown): boolean {
+  return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
 /**

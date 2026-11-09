@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ScaffoldDefinition } from '../../src/core/authoring.js';
-import { scaffoldDefinitionSchema, synth } from '../../src/authoring/synth.js';
+import { scaffoldDefinitionSchema, synth, synthWithModule } from '../../src/authoring/synth.js';
+import { GENERATED_MODULE_BANNER, type ScaffoldModuleEmitter } from '../../src/authoring/emitModule.js';
 
 let root: string;
 
@@ -188,5 +189,208 @@ describe('synth', () => {
 
     // Confirms this really didn't fall back to the old src/plugins/<id> convention.
     await expect(stat(join(root, 'src'))).rejects.toThrow();
+  });
+});
+
+// SYNTH-001 / SK-ADR-009 — synthWithModule(): the full orchestration (D1-D8).
+describe('synthWithModule', () => {
+  const pluginOutDir = () => join(root, 'plugin');
+
+  const DEFINITION_WITH_VALIDATE: ScaffoldDefinition = {
+    id: 'closure-fixture',
+    description: 'Closure fixture.',
+    questions: [{ id: 'name', message: 'Name', type: 'input', validate: () => true }],
+    steps: [{ action: 'mkdir', params: { path: 'src' } }],
+  };
+
+  /** Real, hand-written ESM text — never a mock of `esbuild` itself (per `emitModule.ts`'s own header comment). */
+  const matchingFakeEmitter: ScaffoldModuleEmitter = {
+    async emit() {
+      return `${GENERATED_MODULE_BANNER}
+export default {
+  id: 'closure-fixture',
+  description: 'Closure fixture.',
+  questions: [{ id: 'name', message: 'Name', type: 'input', validate: (value) => true }],
+  steps: [{ action: 'mkdir', params: { path: 'src' } }],
+};
+`;
+    },
+  };
+
+  const divergingFakeEmitter: ScaffoldModuleEmitter = {
+    async emit() {
+      return `${GENERATED_MODULE_BANNER}
+export default {
+  id: 'closure-fixture-WRONG-ID',
+  description: 'Closure fixture.',
+  questions: [{ id: 'name', message: 'Name', type: 'input', validate: (value) => true }],
+  steps: [{ action: 'mkdir', params: { path: 'src' } }],
+};
+`;
+    },
+  };
+
+  it('no closures: writes only scaffold.json, no scaffold.js, no $synth key', async () => {
+    const result = await synthWithModule(VALID_DEFINITION, { outDir: pluginOutDir() });
+
+    expect(result.droppedClosures).toEqual([]);
+    expect(result.modulePath).toBeUndefined();
+    await expect(stat(join(pluginOutDir(), 'scaffold.js'))).rejects.toThrow();
+
+    const raw = await readFile(result.outputPath, 'utf8');
+    expect(JSON.parse(raw)).not.toHaveProperty('$synth');
+  });
+
+  it('closures + emitJs (default): writes the verified pair, with a $synth marker naming the module', async () => {
+    const result = await synthWithModule(DEFINITION_WITH_VALIDATE, {
+      outDir: pluginOutDir(),
+      scaffoldTsPath: join(pluginOutDir(), 'scaffold.ts'),
+      emitter: matchingFakeEmitter,
+    });
+
+    expect(result.droppedClosures).toEqual(['questions.name.validate']);
+    expect(result.modulePath).toBe(join(pluginOutDir(), 'scaffold.js'));
+
+    const jsonRaw = JSON.parse(await readFile(result.outputPath, 'utf8'));
+    expect(jsonRaw.$synth).toEqual({ droppedClosures: ['questions.name.validate'], module: 'scaffold.js' });
+    expect(jsonRaw.questions[0]).not.toHaveProperty('validate');
+
+    const moduleRaw = await readFile(result.modulePath!, 'utf8');
+    expect(moduleRaw.split(/\r?\n/, 1)[0]).toBe(GENERATED_MODULE_BANNER);
+  });
+
+  it('parity mismatch (diverging fake emitter): throws, and writes NEITHER file', async () => {
+    await expect(
+      synthWithModule(DEFINITION_WITH_VALIDATE, {
+        outDir: pluginOutDir(),
+        scaffoldTsPath: join(pluginOutDir(), 'scaffold.ts'),
+        emitter: divergingFakeEmitter,
+      })
+    ).rejects.toThrow(/parity/i);
+
+    await expect(stat(join(pluginOutDir(), 'scaffold.json'))).rejects.toThrow();
+    await expect(stat(join(pluginOutDir(), 'scaffold.js'))).rejects.toThrow();
+    // verifyModule() does create outDir itself (mkdirSync, same as the
+    // existing JSON-only writer always has) before staging its temp .mjs —
+    // the real invariant is "no leftover temp file", not "the directory
+    // itself never gets created".
+    const { readdir } = await import('node:fs/promises');
+    await expect(readdir(pluginOutDir())).resolves.toEqual([]);
+  });
+
+  it('a stale scaffold.js (carrying the generated banner) is removed when this run has no closures', async () => {
+    await mkdir(pluginOutDir(), { recursive: true });
+    await writeFile(join(pluginOutDir(), 'scaffold.js'), `${GENERATED_MODULE_BANNER}\nexport default {};\n`, 'utf8');
+
+    await synthWithModule(VALID_DEFINITION, { outDir: pluginOutDir() });
+
+    await expect(stat(join(pluginOutDir(), 'scaffold.js'))).rejects.toThrow();
+  });
+
+  it('a foreign scaffold.js (no generated banner) is left untouched, with a warning, when this run has no closures', async () => {
+    await mkdir(pluginOutDir(), { recursive: true });
+    const foreignContent = '// hand-written, not from synth\nexport default {};\n';
+    await writeFile(join(pluginOutDir(), 'scaffold.js'), foreignContent, 'utf8');
+
+    const warnings: string[] = [];
+    await synthWithModule(VALID_DEFINITION, { outDir: pluginOutDir(), stderr: (l) => warnings.push(l) });
+
+    const after = await readFile(join(pluginOutDir(), 'scaffold.js'), 'utf8');
+    expect(after).toBe(foreignContent);
+    expect(warnings.some((l) => l.includes('scaffold.js'))).toBe(true);
+  });
+
+  it('closures + emitJs with a foreign scaffold.js (no generated banner): throws before writing or emitting anything, and leaves the foreign file untouched', async () => {
+    await mkdir(pluginOutDir(), { recursive: true });
+    const foreignContent = '// hand-written workaround, not from synth\nexport default {};\n';
+    await writeFile(join(pluginOutDir(), 'scaffold.js'), foreignContent, 'utf8');
+
+    let emitterCalled = false;
+    const countingEmitter: ScaffoldModuleEmitter = {
+      async emit(path) {
+        emitterCalled = true;
+        return matchingFakeEmitter.emit(path);
+      },
+    };
+
+    const failure = synthWithModule(DEFINITION_WITH_VALIDATE, {
+      outDir: pluginOutDir(),
+      scaffoldTsPath: join(pluginOutDir(), 'scaffold.ts'),
+      emitter: countingEmitter,
+    });
+    await expect(failure).rejects.toThrow(/not generated by synth/);
+    await expect(failure).rejects.toThrow(/--no-emit-js/);
+
+    expect(emitterCalled).toBe(false);
+    expect(await readFile(join(pluginOutDir(), 'scaffold.js'), 'utf8')).toBe(foreignContent);
+    // Nothing else was written: no scaffold.json, no staged/temp files.
+    expect(await readdir(pluginOutDir())).toEqual(['scaffold.js']);
+  });
+
+  it('closures + emitJs with a scaffold.js that synth itself generated earlier (carries the banner): regenerates it normally', async () => {
+    await mkdir(pluginOutDir(), { recursive: true });
+    await writeFile(join(pluginOutDir(), 'scaffold.js'), `${GENERATED_MODULE_BANNER}\nexport default {};\n`, 'utf8');
+
+    const result = await synthWithModule(DEFINITION_WITH_VALIDATE, {
+      outDir: pluginOutDir(),
+      scaffoldTsPath: join(pluginOutDir(), 'scaffold.ts'),
+      emitter: matchingFakeEmitter,
+    });
+
+    expect(result.modulePath).toBe(join(pluginOutDir(), 'scaffold.js'));
+    expect(await readFile(result.modulePath!, 'utf8')).toContain("id: 'closure-fixture'");
+  });
+
+  it('closures + --no-emit-js with a foreign scaffold.js: succeeds and leaves the foreign file untouched', async () => {
+    await mkdir(pluginOutDir(), { recursive: true });
+    const foreignContent = '// hand-written workaround, not from synth\nexport default {};\n';
+    await writeFile(join(pluginOutDir(), 'scaffold.js'), foreignContent, 'utf8');
+
+    const result = await synthWithModule(DEFINITION_WITH_VALIDATE, {
+      outDir: pluginOutDir(),
+      emitJs: false,
+      stderr: () => {},
+    });
+
+    expect(result.modulePath).toBeUndefined();
+    expect(await readFile(join(pluginOutDir(), 'scaffold.js'), 'utf8')).toBe(foreignContent);
+  });
+
+  it('--no-emit-js (emitJs: false) with closures present: writes JSON with $synth (no module field), warns on stderr, succeeds', async () => {
+    const warnings: string[] = [];
+    const result = await synthWithModule(DEFINITION_WITH_VALIDATE, {
+      outDir: pluginOutDir(),
+      emitJs: false,
+      stderr: (l) => warnings.push(l),
+    });
+
+    expect(result.droppedClosures).toEqual(['questions.name.validate']);
+    expect(result.modulePath).toBeUndefined();
+    await expect(stat(join(pluginOutDir(), 'scaffold.js'))).rejects.toThrow();
+
+    const jsonRaw = JSON.parse(await readFile(result.outputPath, 'utf8'));
+    expect(jsonRaw.$synth).toEqual({ droppedClosures: ['questions.name.validate'] });
+    expect(jsonRaw.$synth.module).toBeUndefined();
+
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.join('\n')).toContain('questions.name.validate');
+  });
+
+  it('throws on structural validation failure before ever touching the emitter or the disk', async () => {
+    const invalid = { ...VALID_DEFINITION, steps: 'not-an-array' } as unknown as ScaffoldDefinition;
+    let emitterCalled = false;
+    const neverCalledEmitter: ScaffoldModuleEmitter = {
+      async emit() {
+        emitterCalled = true;
+        return '';
+      },
+    };
+
+    await expect(
+      synthWithModule(invalid, { outDir: pluginOutDir(), emitter: neverCalledEmitter })
+    ).rejects.toThrow();
+
+    expect(emitterCalled).toBe(false);
+    await expect(stat(pluginOutDir())).rejects.toThrow();
   });
 });

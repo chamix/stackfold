@@ -186,7 +186,21 @@ export default defineScaffold({
       // comment). Must run before either patchFile step below.
       step('runHookCommand', {
         command: 'npx',
-        args: ['tsx', 'src/cli/index.ts', 'scaffold', 'synth', { cat: ['src/plugins/', { var: 'pluginId' }] }],
+        args: [
+          'tsx',
+          'src/cli/index.ts',
+          'scaffold',
+          'synth',
+          { cat: ['src/plugins/', { var: 'pluginId' }] },
+          '--no-emit-js',
+          // SYNTH-001 / SK-ADR-009 Decision 2: a freshly generated in-repo
+          // plugin never declares any `validate` closures of its own
+          // (D-E), so there would be nothing to emit anyway — but without
+          // this flag, a `scaffold.js` sitting next to the generated
+          // `scaffold.ts` would shadow it under `tsx`'s own module
+          // resolution the next time anything imports
+          // `../plugins/<pluginId>/scaffold.js`-shaped paths in dev.
+        ],
       }),
       // (2) Import line: the two symbols the registry-entry step below
       // needs to compile+register the generated manifest. Not

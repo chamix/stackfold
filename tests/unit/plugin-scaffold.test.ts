@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { compileScaffold, type ScaffoldDefinition } from '../../src/core/authoring.js';
 import type { HookPorts } from '../../src/core/types.js';
 import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
+import { synthWithModule } from '../../src/authoring/synth.js';
 import definition, { pluginIdSchema } from '../../src/plugins/plugin-scaffold/scaffold.js';
 
 // Same shape as `src/plugins/electron-stackfold/scaffold.test.ts` /
@@ -91,6 +92,49 @@ describe('plugin-scaffold — its own ScaffoldDefinition (ARCH-003 Decision 3)',
   it('declares no patchFile step anywhere (ARCH-003 Decision 3: nothing to patch for an external plugin)', () => {
     const cliSource = JSON.stringify(definition);
     expect(cliSource).not.toContain('patchFile');
+  });
+
+  // SYNTH-001 / SK-ADR-009 Decision 3: a freshly generated plugin-scaffold
+  // template declares zero closures (`questions: []`, no `validate` of its
+  // own — confirmed structurally below), so synth-ing a real copy of it
+  // must produce NEITHER a `scaffold.js` nor a `$synth` key. This runs
+  // `synthWithModule()` directly against the actual generated
+  // `scaffold.ts` content (via a real smoke-tested `ScaffoldDefinition`
+  // built the same way `buildBlueprint()`'s own generated file would
+  // compile), so it's a real check of the artifact itself, not just a
+  // string search.
+  it('synth-ing a freshly generated (closure-free) plugin produces no scaffold.js and no $synth key', async () => {
+    const plugin = compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
+    const blueprint = plugin.buildBlueprint({
+      pluginId: 'closure-free-fixture',
+      displayName: 'Closure Free Fixture',
+      description: 'No closures here.',
+      author: 'Test',
+    });
+    const generatedScaffoldTs = blueprint.files.find((f) => f.path === 'scaffold.ts');
+    expect(generatedScaffoldTs).toBeDefined();
+    // The generated plugin declares no questions/validate at all (D-E).
+    expect(generatedScaffoldTs!.content.toString()).not.toContain('validate');
+
+    const dir = await mkdtemp(join(tmpdir(), 'stackfold-plugin-scaffold-closure-free-'));
+    try {
+      const generatedDefinition: ScaffoldDefinition = {
+        id: 'closure-free-fixture',
+        description: 'No closures here.',
+        questions: [],
+        steps: [],
+      };
+      const result = await synthWithModule(generatedDefinition, { outDir: dir });
+
+      expect(result.droppedClosures).toEqual([]);
+      expect(result.modulePath).toBeUndefined();
+      await expect(stat(join(dir, 'scaffold.js'))).rejects.toThrow();
+      const { readFile } = await import('node:fs/promises');
+      const json = JSON.parse(await readFile(result.outputPath, 'utf8'));
+      expect(json.$synth).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
