@@ -279,8 +279,10 @@ file `plugin-scaffold`/`scaffold synth` produce for you (when there are
 no `validate` closures to carry), and it's fully supported by `stackfold
 plugin register`/`list`/`info`/`init`. You're skipping the
 TS-authoring step and writing the compiled artifact directly — which
-means no `validate` closure is available this way at all; see the
-`QuestionDefinition` note below.
+means no `validate` closure is available this way at all. Declarative
+`constraints` (see the `QuestionConstraints` section below) are plain
+JSON data, not a closure, so they work fine in a hand-written
+`scaffold.json` — only `validate` requires TypeScript.
 
 ### Package entry points
 
@@ -316,6 +318,7 @@ A `scaffold.json` is one JSON object with these top-level fields:
   type: "input" | "confirm" | "select";
   choices?: string[];    // required when type === "select"
   default?: string | boolean | number;
+  constraints?: QuestionConstraints; // "input" only — see below
 }
 ```
 
@@ -327,7 +330,59 @@ A `scaffold.json` is one JSON object with these top-level fields:
 > `validate` closure intact whenever one is declared, and marks
 > `scaffold.json` so `stackfold plugin register` refuses to accept it in
 > place of that module — see [`stackfold scaffold synth
-> <dir>`](#stackfold-scaffold-synth-dir) above.
+> <dir>`](#stackfold-scaffold-synth-dir) above. **`constraints` (below) is
+> the exception to this**: it's plain JSON data, not a closure, so it
+> survives `scaffold synth` into `scaffold.json` and works in a
+> hand-written `scaffold.json` with no `scaffold.js` at all.
+
+#### `QuestionConstraints`
+
+A declarative alternative (or complement) to `validate`, for a `type:
+"input"` question only — valid on any other question type is a compile/
+register-time error. Unlike `validate`, it's plain data, so it survives
+`stackfold scaffold synth` into `scaffold.json` and works in a
+hand-written `scaffold.json` with no `scaffold.js` needed.
+
+```ts
+{
+  trim?: boolean;
+  minLength?: { value: number; message: string };
+  maxLength?: { value: number; message: string };
+  rules?: Array<
+    | { matches: string; message: string }     // regex source, no flags
+    | { notMatches: string; message: string }
+  >;
+}
+```
+
+- **`trim`** — when `true`, every check below evaluates the trimmed
+  value; the stored answer itself is never altered.
+- **`minLength`** / **`maxLength`** — reject when the value's length is
+  below/above `value`. Length is counted in Unicode code points, not
+  UTF-16 units — an emoji or other astral character counts as one, not
+  two.
+- **`rules`** — regex checks, evaluated in array order. `matches` fails
+  when the value does *not* contain a match; `notMatches` fails when it
+  does. The regex `source` string carries no flags.
+
+Checks run in a fixed order — `trim` (if set) -> `minLength` ->
+`maxLength` -> `rules` in declared order — and the first one that fails
+wins: its `message` is returned, and no later check runs.
+
+If a question declares both `constraints` and `validate`, `constraints`
+runs first; `validate` only runs if `constraints` passes.
+
+A malformed `constraints` (invalid regex, a non-integer or negative
+length limit, `minLength` greater than `maxLength`, an empty message, an
+unknown key, or `constraints` on a non-`"input"` question) is rejected
+at compile/synth/register time — never silently accepted, and never
+surfacing as a confusing runtime error to someone filling out a prompt.
+
+**Trust model:** regex sources in `rules` are author-supplied and run
+with no timeout or sandbox, the same trust model templates and hooks
+already have (an author already executes arbitrary code at `register`
+time) — a pathological regex can hang validation for that author's own
+plugin.
 
 #### `ActionStep`
 

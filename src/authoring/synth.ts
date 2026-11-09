@@ -62,8 +62,9 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { compileScaffold, type ScaffoldDefinition } from '../core/authoring.js';
+import { compileConstraints } from '../core/constraints.js';
 import type { ExpressionEvaluator } from '../core/ports.js';
-import type { Answers, QuestionDefinition } from '../core/types.js';
+import type { Answers, QuestionConstraints, QuestionDefinition } from '../core/types.js';
 import { JsonLogicExpressionEvaluator } from '../infra/expressionEvaluator.js';
 import { GENERATED_MODULE_BANNER, realEsbuildEmitter, type ScaffoldModuleEmitter } from './emitModule.js';
 
@@ -73,18 +74,89 @@ import { GENERATED_MODULE_BANNER, realEsbuildEmitter, type ScaffoldModuleEmitter
 
 const answerValueSchema = z.union([z.string(), z.boolean(), z.number()]);
 
-const questionDefinitionSchema = z.object({
-  id: z.string().trim().min(1, 'questions[] entries require a non-empty "id"'),
-  message: z.string().trim().min(1, 'questions[] entries require a non-empty "message"'),
-  type: z.enum(['input', 'confirm', 'select']),
-  choices: z.array(z.string()).optional(),
-  default: answerValueSchema.optional(),
-  validate: z
-    .custom<(value: string | boolean | number) => true | string>((val) => typeof val === 'function', {
-      message: 'questions[].validate must be a function when present',
-    })
-    .optional(),
-});
+/**
+ * `ConstraintLimit` (SYNTH-002 D1) — strict: an unknown key (e.g. a typo)
+ * is rejected here rather than silently ignored, matching
+ * `scaffoldDefinitionSchema`'s existing "unknown keys rejected" convention.
+ */
+const constraintLimitSchema = z
+  .object({
+    value: z.number().int('"value" must be an integer').nonnegative('"value" must be >= 0'),
+    message: z.string().min(1, '"message" must be a non-empty string'),
+  })
+  .strict();
+
+/**
+ * `ConstraintRule` (SYNTH-002 D1) — a discriminated-by-presence union, not
+ * `z.discriminatedUnion`, since the discriminant key itself (`matches` vs.
+ * `notMatches`) is the field being validated, not a sibling tag field.
+ * Regex *validity* (not just "is a string") is checked by
+ * `core/constraints.ts`'s own `compileConstraints()` — reached via
+ * `questionConstraintsSchema`'s `superRefine` below — so an invalid regex
+ * source fails with the exact same message whether caught at synth,
+ * register, or direct `compileScaffold()` time (single source of truth,
+ * never re-derived here).
+ */
+const constraintRuleSchema = z.union([
+  z.object({ matches: z.string(), message: z.string().min(1, '"message" must be a non-empty string') }).strict(),
+  z.object({ notMatches: z.string(), message: z.string().min(1, '"message" must be a non-empty string') }).strict(),
+]);
+
+/**
+ * `QuestionConstraints` (SYNTH-002 D1/D4) — strict shape validation plus a
+ * `superRefine` that actually compiles the constraints via
+ * `compileConstraints()` (`core/constraints.ts`), so every fail-fast case
+ * in the spec's table (invalid regex, `minLength > maxLength`, etc.) is
+ * rejected with that function's own descriptive message — never
+ * re-implemented as a parallel zod check that could drift from it.
+ */
+const questionConstraintsSchema = z
+  .object({
+    trim: z.boolean().optional(),
+    minLength: constraintLimitSchema.optional(),
+    maxLength: constraintLimitSchema.optional(),
+    rules: z.array(constraintRuleSchema).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    try {
+      compileConstraints(value as QuestionConstraints);
+    } catch (err) {
+      ctx.addIssue({ code: 'custom', message: toMessage(err) });
+    }
+  });
+
+const questionDefinitionSchema = z
+  .object({
+    id: z.string().trim().min(1, 'questions[] entries require a non-empty "id"'),
+    message: z.string().trim().min(1, 'questions[] entries require a non-empty "message"'),
+    type: z.enum(['input', 'confirm', 'select']),
+    choices: z.array(z.string()).optional(),
+    default: answerValueSchema.optional(),
+    validate: z
+      .custom<(value: string | boolean | number) => true | string>((val) => typeof val === 'function', {
+        message: 'questions[].validate must be a function when present',
+      })
+      .optional(),
+    // SYNTH-002 (data, not a closure — never counted as a dropped closure by
+    // collectClosurePaths()/synth(), unlike "validate" above): see
+    // questionConstraintsSchema's own doc comment.
+    constraints: questionConstraintsSchema.optional(),
+  })
+  // SYNTH-002 D3 (fail-fast invariant 5): "constraints" is only meaningful
+  // on a "input" question — `core/authoring.ts`'s `compileScaffold()`
+  // throws on the same condition at compile time; this mirrors it at synth/
+  // register-validation time, before compileScaffold() ever runs, with the
+  // specific offending id named in the message.
+  .superRefine((question, ctx) => {
+    if (question.constraints && question.type !== 'input') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['constraints'],
+        message: `questions[].constraints is only valid on a "input" question (id "${question.id}" has type "${question.type}")`,
+      });
+    }
+  });
 
 /** `ActionStep` — `params`/`when` stay `unknown`, same deliberate opacity `core/authoring.ts` itself uses (per-action schemas validate `params` for real, inside `compileScaffold()`). */
 const actionStepSchema = z.object({

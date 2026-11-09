@@ -59,7 +59,7 @@ describe('web-app-stackfold — its own ScaffoldDefinition compiles (SK-ADR-003)
     expect(plugin.buildBlueprint(answers).mainFile).toBe(expectedMainFile);
   });
 
-  it('rejects an invalid appName at the validate() boundary (the reason this plugin must compile from scaffold.js, not scaffold.json)', () => {
+  it('rejects an invalid appName at the validate() boundary (now derived from declarative "constraints" — SYNTH-002 — so it stays live from scaffold.json too)', () => {
     const plugin = compileScaffold(definition as ScaffoldDefinition, new JsonLogicExpressionEvaluator());
     const appName = plugin.questions().find((q) => q.id === 'appName');
     expect(appName?.validate).toBeTypeOf('function');

@@ -301,6 +301,96 @@ export default defineScaffold({
     30000
   );
 
+  // SYNTH-002 acceptance criterion 6 (.agents/specs/
+  // synth-002-declarative-validation.md): a scaffold.ts with declarative
+  // "constraints" (data, not a closure) synth-ed for real produces NO
+  // scaffold.js and NO $synth marker at all — "constraints" is never a
+  // dropped closure. Registering and init-ing that scaffold.json directly
+  // (never touching a scaffold.js) still rejects "My_CLI" end-to-end, same
+  // as the validate-closure case above.
+  it(
+    'constraints stay active end-to-end (register -> init) from a pure scaffold.json, no scaffold.js involved',
+    async () => {
+      await writeFile(
+        join(pluginDir, 'scaffold.ts'),
+        `import { defineScaffold, file } from '${BUILDER_URL}';
+import { pluginIdConstraints } from '${VALIDATION_URL}';
+
+export default defineScaffold({
+  id: 'synth-cli-constraints-fixture',
+  description: 'SYNTH-002 reproduction fixture — rejects a non-kebab-case name via declarative constraints.',
+  questions: [{ id: 'name', message: 'Name', type: 'input', constraints: pluginIdConstraints }],
+  steps: [file('README.md', '{{name}}\\n')],
+});
+`,
+        'utf8'
+      );
+
+      const synthDeps = makeDeps();
+      const synthCode = await runScaffoldSynth(pluginDir, synthDeps);
+
+      expect(synthDeps.stderrLines).toEqual([]);
+      expect(synthCode).toBe(0);
+
+      const jsonPath = join(pluginDir, 'scaffold.json');
+      const jsPath = join(pluginDir, 'scaffold.js');
+      await expect(stat(jsPath)).rejects.toThrow();
+
+      const jsonRaw = JSON.parse(await readFile(jsonPath, 'utf8')) as {
+        $synth?: unknown;
+        questions: Array<{ constraints?: unknown }>;
+      };
+      expect(jsonRaw.$synth).toBeUndefined();
+      expect(jsonRaw.questions[0]?.constraints).toBeDefined();
+
+      const evaluator = new JsonLogicExpressionEvaluator();
+
+      function pluginDeps(): PluginCommandDependencies & { stdoutLines: string[]; stderrLines: string[] } {
+        const stdoutLines: string[] = [];
+        const stderrLines: string[] = [];
+        return {
+          cwd: () => pluginDir,
+          evaluator,
+          stdout: (l) => stdoutLines.push(l),
+          stderr: (l) => stderrLines.push(l),
+          stdoutLines,
+          stderrLines,
+        };
+      }
+
+      const registerDeps = pluginDeps();
+      const registerCode = await runPluginRegister(jsonPath, { project: true }, registerDeps);
+      expect(registerCode).toBe(0);
+      expect(registerDeps.stderrLines).toEqual([]);
+
+      const registry = new DynamicPluginRegistry({ evaluator, cwd: () => pluginDir });
+      const initTargetDir = join(root, 'initialized-project-constraints');
+      const initStderr: string[] = [];
+      const initDeps: InitCommandDependencies = {
+        registry,
+        ports: {
+          prompter: { ask: async () => ({}) },
+          fileWriter: new NodeFileWriter(),
+          processRunner: { run: async () => {} },
+        },
+        opener: { open: async () => {} },
+        cwd: () => root,
+        stdout: () => {},
+        stderr: (l) => initStderr.push(l),
+      };
+
+      const initCode = await runInit('synth-cli-constraints-fixture', initTargetDir, initDeps, {
+        answer: ['name=My_CLI'],
+        open: false,
+      });
+
+      expect(initCode).toBe(1);
+      expect(initStderr.join('\n')).toMatch(/name|kebab-case/i);
+      await expect(stat(join(initTargetDir, 'README.md'))).rejects.toThrow();
+    },
+    30000
+  );
+
   // Acceptance criterion 7 — `stackfold list`/`--help` never load esbuild.
   // esbuild is only ever reachable through `realEsbuildEmitter.emit()`
   // (`src/authoring/emitModule.ts`), itself only reachable from

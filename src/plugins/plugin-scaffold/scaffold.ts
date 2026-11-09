@@ -58,13 +58,23 @@
  * exact `stackfold plugin register <pluginId>/scaffold.json` command for
  * the author to run next.
  *
- * The 4 questions and their validators are identical to `plugin-builder`'s
- * own (same reused, hoisted schemas — ARCH-003 Decision 2 — rather than a
- * second, parallel definition).
+ * The 4 questions and their constraints are identical to `plugin-builder`'s
+ * own (same reused, hoisted `QuestionConstraints` constants — SYNTH-002 D5,
+ * `.agents/specs/synth-002-declarative-validation.md` — rather than a
+ * second, parallel definition). Declarative `constraints` (not a `validate`
+ * closure) survive `scaffold synth` into this plugin's own `scaffold.json`
+ * (which this file — unlike `plugin-builder` — has none committed of its
+ * own; its generated end-user plugin's `scaffold.json` is a different file
+ * entirely, written per-registration).
  */
 import { defineScaffold, step } from '../../authoring/builder.js';
 import { loadTemplate } from '../../authoring/templateLoader.js';
-import { authorSchema, descriptionSchema, pluginIdSchema, toValidate } from '../../core/validation.js';
+import {
+  authorConstraints,
+  descriptionConstraints,
+  pluginIdConstraints,
+  pluginIdSchema,
+} from '../../core/validation.js';
 
 export { pluginIdSchema };
 
@@ -113,28 +123,28 @@ export default defineScaffold({
       message: 'Plugin id (kebab-case, e.g. "my-cool-plugin")',
       type: 'input',
       default: DEFAULT_PLUGIN_ID,
-      validate: toValidate(pluginIdSchema),
+      constraints: pluginIdConstraints,
     },
     {
       id: 'displayName',
       message: 'Display name (shown in `stackfold list`/`info`)',
       type: 'input',
       default: DEFAULT_DISPLAY_NAME,
-      validate: toValidate(descriptionSchema),
+      constraints: descriptionConstraints,
     },
     {
       id: 'description',
       message: 'Short description (shown in listings)',
       type: 'input',
       default: DEFAULT_PLUGIN_DESCRIPTION,
-      validate: toValidate(descriptionSchema),
+      constraints: descriptionConstraints,
     },
     {
       id: 'author',
       message: 'Author',
       type: 'input',
       default: DEFAULT_AUTHOR,
-      validate: toValidate(authorSchema),
+      constraints: authorConstraints,
     },
   ],
 

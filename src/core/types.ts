@@ -18,6 +18,48 @@ import type { FileWriter, ProcessRunner, Prompter } from './ports.js';
 export type AnswerValue = string | boolean | number;
 export type Answers = Record<string, AnswerValue>;
 
+/**
+ * A single bound (`minLength`/`maxLength`) within `QuestionConstraints`
+ * (SYNTH-002, `.agents/specs/synth-002-declarative-validation.md` D1).
+ * `value` must be a non-negative integer; `message` is the error string
+ * returned when the bound is violated. Pure data — no closures, no I/O.
+ */
+export interface ConstraintLimit {
+  value: number;
+  message: string;
+}
+
+/**
+ * A single regex-shaped rule within `QuestionConstraints.rules` (D1):
+ * `matches` fails when the (trimmed, per `trim`) value does NOT contain a
+ * match for the regex source; `notMatches` fails when it DOES. `message` is
+ * the error string returned on violation. The regex `source` carries no
+ * flags — compiled via `new RegExp(source)` (core/constraints.ts) — keeping
+ * the shape trivially JSON-serializable and closing off flag-based
+ * surprises (e.g. a hidden `g`/`i`) for every built-in rule.
+ */
+export type ConstraintRule = { matches: string; message: string } | { notMatches: string; message: string };
+
+/**
+ * Declarative, closed-vocabulary validation for a single text
+ * `QuestionDefinition` (SYNTH-002/SK-ADR-010) — pure data, so it survives
+ * `scaffold synth` into `scaffold.json` without loss, unlike a `validate`
+ * closure (SK-ADR-009). Interpreted by `core/constraints.ts`'s
+ * `compileConstraints()`, which `compileScaffold()` (`core/authoring.ts`)
+ * invokes once per plugin compile, never per answer. Evaluation order,
+ * fixed (never author-reordered): `trim` (if set) -> `minLength` ->
+ * `maxLength` -> `rules` in array order; the first violated check's
+ * `message` wins. Only valid on a `type: 'input'` question — `compileScaffold()`
+ * rejects `constraints` on `confirm`/`select` at compile time.
+ */
+export interface QuestionConstraints {
+  /** When `true`, every check below evaluates the trimmed value; the stored answer is never altered. */
+  trim?: boolean;
+  minLength?: ConstraintLimit;
+  maxLength?: ConstraintLimit;
+  rules?: ConstraintRule[];
+}
+
 export interface QuestionDefinition {
   id: string;
   message: string;
@@ -27,6 +69,13 @@ export interface QuestionDefinition {
   default?: AnswerValue;
   /** Pure — no I/O. Return `true` if valid, or an error message. */
   validate?: (value: AnswerValue) => true | string;
+  /**
+   * Declarative alternative/complement to `validate` (SYNTH-002) — see
+   * `QuestionConstraints`'s own doc comment. When both are present,
+   * `compileScaffold()` derives a `validate` that runs `constraints` first,
+   * short-circuiting before the original `validate` on the first failure.
+   */
+  constraints?: QuestionConstraints;
 }
 
 export interface FileEntry {

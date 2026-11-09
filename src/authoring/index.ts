@@ -18,7 +18,12 @@
  *   into a `QuestionDefinition.validate` closure) plus the reusable,
  *   already-shared schemas an author's own `validate` closures commonly
  *   need: `appNameSchema`/`descriptionSchema`/`authorSchema`/
- *   `pluginIdSchema`.
+ *   `pluginIdSchema`. Also their SYNTH-002 `QuestionConstraints`
+ *   equivalents (`appNameConstraints`/`descriptionConstraints`/
+ *   `authorConstraints`/`pluginIdConstraints`) — declarative data an author
+ *   can assign directly to a question's `constraints` field, surviving
+ *   `scaffold synth` into `scaffold.json` without loss, unlike a `validate`
+ *   closure (SK-ADR-009).
  *
  * Deliberately does NOT re-export `synth()` itself (`src/authoring/
  * synth.ts`) — that pipeline is invoked exclusively through the `stackfold
@@ -42,10 +47,14 @@ export {
 } from './builder.js';
 export { loadTemplate } from './templateLoader.js';
 export {
+  appNameConstraints,
   appNameSchema,
+  authorConstraints,
   authorSchema,
+  descriptionConstraints,
   descriptionSchema,
   MAX_PACKAGE_NAME_LENGTH,
+  pluginIdConstraints,
   pluginIdSchema,
   toValidate,
 } from '../core/validation.js';
