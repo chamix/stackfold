@@ -140,8 +140,18 @@ describe('core/constraints.ts differential equivalence vs. zod (SYNTH-002 accept
       const constraintsValidate = compileConstraints(family.constraints);
       const fullCorpus = [...SEC_001_CORPUS, ...RANDOM_CORPUS, ...lengthBoundaryStrings(family.max)];
 
-      it.each(fullCorpus.map((value) => [value] as const))('agrees for %j', (value) => {
-        expect(constraintsValidate(value)).toEqual(zodValidate(value));
+      // One test per family (not one per string): a rule change that breaks equivalence would otherwise
+      // fail hundreds of generated tests at once. Mismatches are collected and the first 10 are shown.
+      it('agrees with the zod schema for every corpus string', () => {
+        const mismatches: Array<{ value: string; constraints: true | string; zod: true | string }> = [];
+        for (const value of fullCorpus) {
+          const fromConstraints = constraintsValidate(value) as true | string;
+          const fromZod = zodValidate(value) as true | string;
+          if (fromConstraints !== fromZod) {
+            mismatches.push({ value: JSON.stringify(value), constraints: fromConstraints, zod: fromZod });
+          }
+        }
+        expect(mismatches.slice(0, 10), `${mismatches.length} mismatching string(s) out of ${fullCorpus.length}`).toEqual([]);
       });
 
       it(`exercises >= 2000 pseudo-random strings (actual: ${fullCorpus.length})`, () => {
