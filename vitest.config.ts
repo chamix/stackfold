@@ -49,7 +49,20 @@ export default defineConfig({
      * then many parallel workers repeatedly hitting the same
      * import-time crash).
      */
-    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/.manual-test-playground/**','**/.e2e-playground/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/dist/**',
+      '**/.manual-test-playground/**',
+      '**/.e2e-playground/**',
+      /**
+       * `.agents/` is the private governance trail (its own nested git, never part of
+       * this repo's suite). Its experiment results hold snapshots of generated plugins
+       * with their own `*.test.mjs` files, written for `node --test`, not for this
+       * config; Vitest's default include glob would otherwise pick them up and fail.
+       */
+      '**/.agents/**',
+    ],
     /**
      * `.manual-test-playground/**` holds standalone scaffolded apps
      * (e.g. `app-react`) used for manual, ad-hoc verification -- each
