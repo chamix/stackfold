@@ -125,9 +125,50 @@ falling back to the plugin's id and its mandatory one-line description.
 ### `stackfold scaffold synth <dir>`
 
 Compiles a TS-authored scaffold module (`scaffold.ts`, plus any sibling
-`.hbs` template files) into the canonical `scaffold.json` that stackfold
-actually loads at runtime. This is the tool plugin authors run — see
+`.hbs` template files) into the canonical runtime artifact(s) stackfold
+actually loads. This is the tool plugin authors run — see
 [Writing a plugin](#writing-a-plugin) below.
+
+`scaffold.json` is always written. `JSON.stringify` can't represent a
+function, so when a question declares a `validate` closure, `synth` also
+emits a sibling `scaffold.js` — an ESM module whose default export is the
+*same* definition, with its `validate` closure(s) intact — and marks
+`scaffold.json` with a top-level `$synth` key naming exactly which
+closures it lost (`$synth.droppedClosures`) and which module to register
+instead (`$synth.module`). Both artifacts are verified against each other
+(same shape, same closures present, a real `compileScaffold()`/
+`buildBlueprint()` smoke test) before either is written — any mismatch
+and `synth` writes neither file. When there are no closures at all,
+`scaffold.json` is the only artifact and carries no `$synth` key.
+
+**Register the module, not the JSON.** Whenever `synth` emits a
+`scaffold.js`, the command it prints at the end
+(`stackfold plugin register <dir>/scaffold.js`) is the one that keeps
+`validate` active. `stackfold plugin register`
+rejects a `scaffold.json` carrying a non-empty `$synth.droppedClosures`
+outright, with a message pointing at the sibling module (or, if emission
+was suppressed, at re-running `synth`) — registering it would silently
+resurrect exactly the "validate is `undefined` at runtime, so nothing is
+ever rejected" bug this exists to prevent.
+
+`synth` only ever overwrites a `scaffold.js` it generated itself (its
+first line is a `@generated` banner). If a `scaffold.js` you wrote by hand
+already sits in `<dir>` and the definition has closures, `synth` stops
+with an error before writing anything — move your file aside, or pass
+`--no-emit-js`.
+
+Pass `--no-emit-js` to suppress the module and degrade to a warning
+instead (the dropped closure paths are listed on stderr; exit code stays
+`0`). `plugin-builder`'s own generated-plugin workflow uses this flag
+internally, so a freshly scaffolded in-repo plugin never gets a
+`scaffold.js` shadowing its own `scaffold.ts` under `tsx`'s module
+resolution in dev.
+
+Because `scaffold.js` keeps calling `loadTemplate(import.meta.dirname,
+...)` exactly like the TS source did, any sibling `.hbs` template file
+must stay next to `scaffold.js` wherever it's registered from — and if
+you publish the plugin to npm, make sure those `.hbs` files are listed in
+`package.json`'s `files`, or they won't ship.
 
 ## External plugins
 
@@ -224,17 +265,22 @@ init-only, so neither needs to migrate to the other. See the
 `plugin-scaffold` (above) is exactly this: run `stackfold init
 plugin-scaffold ./my-plugin` from anywhere — no checkout, no access to
 `stackfold`'s own source — and you get a real, TS-authored plugin
-(`validate` closures included) synthesized by the same `stackfold
-scaffold synth` pipeline `plugin-builder` uses internally, ready for
-`stackfold plugin register`.
+synthesized by the same `stackfold scaffold synth` pipeline
+`plugin-builder` uses internally, ready for `stackfold plugin register`.
+If any question declares a `validate` closure, `synth` also writes a
+sibling `scaffold.js` carrying it — register *that* file, not
+`scaffold.json`, to keep `validate` active (see [`stackfold scaffold
+synth <dir>`](#stackfold-scaffold-synth-dir) above).
 
 If you'd rather skip TypeScript entirely, you can hand-write a
 `scaffold.json` directly against the schema documented below, then run
 `stackfold plugin register`. This is not a workaround — it's the same
-file `plugin-scaffold`/`scaffold synth` produce for you, and it's fully
-supported by `stackfold plugin register`/`list`/`info`/`init`. You're
-just skipping the TS-authoring step (and its `validate` closures) and
-writing the compiled artifact directly.
+file `plugin-scaffold`/`scaffold synth` produce for you (when there are
+no `validate` closures to carry), and it's fully supported by `stackfold
+plugin register`/`list`/`info`/`init`. You're skipping the
+TS-authoring step and writing the compiled artifact directly — which
+means no `validate` closure is available this way at all; see the
+`QuestionDefinition` note below.
 
 ### Package entry points
 
@@ -274,10 +320,14 @@ A `scaffold.json` is one JSON object with these top-level fields:
 ```
 
 > **Note:** the plugin contract also supports a `validate` function on a
-> question, but a function has no JSON representation — it's only
-> available to a plugin authored as TypeScript (`scaffold.ts` via
-> `plugin-builder`/`scaffold synth`), never to a hand-written
-> `scaffold.json`.
+> question, but a function has no JSON representation — a hand-written
+> `scaffold.json` can never carry one. A plugin authored as TypeScript
+> (`scaffold.ts` via `plugin-builder`/`plugin-scaffold`) can: `stackfold
+> scaffold synth` emits a sibling `scaffold.js` module carrying every
+> `validate` closure intact whenever one is declared, and marks
+> `scaffold.json` so `stackfold plugin register` refuses to accept it in
+> place of that module — see [`stackfold scaffold synth
+> <dir>`](#stackfold-scaffold-synth-dir) above.
 
 #### `ActionStep`
 
@@ -434,8 +484,11 @@ stackfold init hello-world ./my-app
 > If you *do* author a plugin as TypeScript (`scaffold.ts`) instead of
 > hand-writing JSON, `stackfold scaffold synth <dir>` writes the
 > resulting `scaffold.json` directly into `<dir>`, next to the
-> `scaffold.ts` it just compiled — `plugin-scaffold` relies on exactly
-> this when it calls `synth` on its own freshly generated plugin.
+> `scaffold.ts` it compiled — `plugin-scaffold` relies on exactly
+> this when it calls `synth` on its own freshly generated plugin. If any
+> question declares a `validate` closure, a sibling `scaffold.js` is
+> written too, and that's the file to register — see [`stackfold
+> scaffold synth <dir>`](#stackfold-scaffold-synth-dir) above.
 
 ## Architecture
 

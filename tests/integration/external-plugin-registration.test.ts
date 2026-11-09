@@ -1,16 +1,34 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runPluginList, runPluginRegister, runPluginUnregister, type PluginCommandDependencies } from '../../src/cli/commands/plugin.js';
 import { runList, type ListCommandDependencies } from '../../src/cli/commands/list.js';
 import { runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
+import { runScaffoldSynth, type ScaffoldSynthCommandDependencies } from '../../src/cli/commands/scaffoldSynth.js';
 import { CompositePluginRegistry } from '../../src/infra/compositePluginRegistry.js';
 import { DynamicPluginRegistry } from '../../src/infra/dynamicPluginRegistry.js';
 import { StaticPluginRegistry } from '../../src/infra/pluginLoader.js';
 import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
 import { NodeFileWriter } from '../../src/infra/fs.js';
 import type { ProjectOpener } from '../../src/infra/open.js';
+
+/**
+ * stackfold's own repo root, derived from this file's location (ESM-safe —
+ * same convention `scaffold-synth-cli.test.ts` already uses). The new
+ * synth->register->init case below authors its fixture `scaffold.ts` via
+ * absolute `file://` imports of this repo's own `src/authoring/builder.js`/
+ * `src/core/validation.js`, never the bare `'stackfold/authoring'`
+ * specifier — so, unlike `external-plugin-scaffold.test.ts`'s own
+ * plugin-scaffold-generated case, there is no `node_modules/stackfold`
+ * copy to set up here (ARCH-003 history): this fixture's imports resolve
+ * directly against this live checkout, exactly like every other fixture
+ * already in this file.
+ */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const BUILDER_URL = pathToFileURL(join(REPO_ROOT, 'src/authoring/builder.ts')).href;
+const VALIDATION_URL = pathToFileURL(join(REPO_ROOT, 'src/core/validation.ts')).href;
 
 /**
  * Real end-to-end: a real `scaffold.json` on real disk, registered via the
@@ -201,4 +219,77 @@ describe('external plugin unregister (ARCH-003 follow-up)', () => {
     await runList({ registry: compositeRegistry(), stdout: (l) => listStdout.push(l) });
     expect(listStdout.join('\n')).not.toContain('external-fixture-unreg');
   });
+});
+
+// SYNTH-001 / SK-ADR-009 — the real synth -> register scaffold.js -> init
+// path, exercised through this file's own real end-to-end plumbing
+// (`runPluginRegister`/`runInit`), complementing `scaffold-synth-cli.test.ts`'s
+// more detailed version of the same scenario.
+describe('external plugin — scaffold.ts with a validate closure, synth -> register scaffold.js -> init (SYNTH-001)', () => {
+  it('registering scaffold.js keeps validate active; registering the sibling $synth-marked scaffold.json is rejected', async () => {
+    const { mkdir } = await import('node:fs/promises');
+    const pluginDir = join(projectDir, 'author');
+    await mkdir(pluginDir, { recursive: true });
+    await writeFile(join(pluginDir, 'package.json'), '{"type":"module"}\n', 'utf8');
+    await writeFile(
+      join(pluginDir, 'scaffold.ts'),
+      `import { defineScaffold, file } from '${BUILDER_URL}';
+import { toValidate, pluginIdSchema } from '${VALIDATION_URL}';
+
+export default defineScaffold({
+  id: 'external-registration-validate-fixture',
+  description: 'SYNTH-001 fixture.',
+  questions: [{ id: 'name', message: 'Name', type: 'input', validate: toValidate(pluginIdSchema) }],
+  steps: [file('README.md', '{{name}}\\n')],
+});
+`,
+      'utf8'
+    );
+
+    const synthDeps: ScaffoldSynthCommandDependencies = { stdout: () => {}, stderr: () => {} };
+    const synthCode = await runScaffoldSynth(pluginDir, synthDeps);
+    expect(synthCode).toBe(0);
+
+    const jsonPath = join(pluginDir, 'scaffold.json');
+    const jsPath = join(pluginDir, 'scaffold.js');
+    await expect(stat(jsPath)).resolves.toBeTruthy();
+
+    // The $synth-marked JSON is rejected.
+    const jsonRegisterDeps = pluginDeps();
+    const jsonRegisterCode = await runPluginRegister(jsonPath, { project: true }, jsonRegisterDeps);
+    expect(jsonRegisterCode).toBe(1);
+    expect(jsonRegisterDeps.stderrLines[0]).toMatch(/scaffold\.js/);
+
+    // Registering the module instead works.
+    const jsRegisterDeps = pluginDeps();
+    const jsRegisterCode = await runPluginRegister(jsPath, { project: true }, jsRegisterDeps);
+    expect(jsRegisterCode).toBe(0);
+    expect(jsRegisterDeps.stderrLines).toEqual([]);
+
+    // `stackfold init` with the registered module rejects "My_CLI" — the
+    // validate closure is really active against the compiled module.
+    const initStderr: string[] = [];
+    const initDeps: InitCommandDependencies = {
+      registry: compositeRegistry(),
+      ports: {
+        prompter: { ask: async () => ({}) },
+        fileWriter: new NodeFileWriter(),
+        processRunner: { run: async () => {} },
+      },
+      opener: { open: async () => {} },
+      cwd: () => projectDir,
+      stdout: () => {},
+      stderr: (l) => initStderr.push(l),
+    };
+
+    const initCode = await runInit(
+      'external-registration-validate-fixture',
+      join(projectDir, 'initialized'),
+      initDeps,
+      { answer: ['name=My_CLI'], open: false }
+    );
+
+    expect(initCode).toBe(1);
+    expect(initStderr.join('\n')).toMatch(/name|kebab-case/i);
+  }, 30000); // real esbuild run, well over the 5s default — same order of magnitude as scaffold-synth-cli.test.ts's own real-esbuild case.
 });

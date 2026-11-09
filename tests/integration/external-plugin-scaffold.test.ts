@@ -250,8 +250,15 @@ describe('external plugin — plugin-scaffold-authored (ARCH-003 follow-up)', ()
       const scaffoldTsPath = join(targetDir, 'scaffold.ts');
       const scaffoldJsonPath = join(targetDir, 'scaffold.json');
       await expect(readFile(scaffoldTsPath, 'utf8')).resolves.toContain(`id: '${pluginId}'`);
-      const scaffoldJson = JSON.parse(await readFile(scaffoldJsonPath, 'utf8')) as { id: string };
+      const scaffoldJson = JSON.parse(await readFile(scaffoldJsonPath, 'utf8')) as { id: string; $synth?: unknown };
       expect(scaffoldJson.id).toBe(pluginId);
+
+      // SYNTH-001 / SK-ADR-009 Decision 3: a freshly generated
+      // plugin-scaffold template declares zero closures (no `validate` of
+      // its own), so synth-ing it must produce NEITHER a `scaffold.js` nor
+      // a `$synth` key on the JSON — with or without `--no-emit-js`.
+      expect(scaffoldJson.$synth).toBeUndefined();
+      expect(existsSync(join(targetDir, 'scaffold.js'))).toBe(false);
 
       // No special early removal needed anymore: `node_modules/stackfold`
       // is now a plain copied directory (see `installStackfoldAuthoringPackage`'s

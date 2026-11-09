@@ -127,6 +127,9 @@ export async function loadPluginFromSource(
   const resolvedSource = resolveSourcePath(source, kind, baseDir);
   const moduleNamespace = await importSource(resolvedSource, kind);
   const definition = extractDefaultExport(moduleNamespace, resolvedSource);
+  if (kind === 'scaffold-json') {
+    rejectIfSynthMarkedWithDroppedClosures(definition);
+  }
   const plugin = compileScaffold(definition as ScaffoldDefinition, evaluator);
   runSmokeTest(plugin);
   return plugin;
@@ -137,6 +140,38 @@ function extractDefaultExport(moduleNamespace: unknown, source: string): unknown
     throw new Error(`"${source}" has no default export`);
   }
   return (moduleNamespace as { default: unknown }).default;
+}
+
+/**
+ * SYNTH-001 / SK-ADR-009 Decision 7 (D8) — ergonomics guard, `scaffold-json`
+ * only: a `scaffold.json` whose top-level `$synth.droppedClosures` is
+ * non-empty lost `validate` closures at synth time. Registering it as-is
+ * would silently resurrect the exact bug this task closes (a `validate`
+ * that's `undefined` at runtime, always "valid"), so this rejects it
+ * before `compileScaffold()` ever runs, with a message pointing at the
+ * sibling `scaffold.js` module when one was emitted, or at re-running
+ * `synth` without `--no-emit-js` otherwise. Editable/removable by hand —
+ * this is ergonomics, not a security boundary (see SK-ADR-009's own
+ * "Consequences"); `compileScaffold()` itself is untouched and still
+ * ignores the extraneous `$synth` key on any JSON that doesn't trip this
+ * guard (e.g. because the marker was stripped).
+ */
+function rejectIfSynthMarkedWithDroppedClosures(definition: unknown): void {
+  if (!isPlainRecord(definition)) return;
+  const marker = definition.$synth;
+  if (!isPlainRecord(marker)) return;
+  const droppedClosures = marker.droppedClosures;
+  if (!Array.isArray(droppedClosures) || droppedClosures.length === 0) return;
+
+  const moduleHint = typeof marker.module === 'string' ? marker.module : undefined;
+  const message = moduleHint
+    ? `this scaffold.json lost validate closures at synth time: register "${moduleHint}" instead`
+    : 'this scaffold.json lost validate closures at synth time: re-run `stackfold scaffold synth` without `--no-emit-js`';
+  throw new Error(message);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

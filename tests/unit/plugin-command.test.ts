@@ -176,6 +176,26 @@ describe('runPluginRegister', () => {
     expect(writable.global).toBeUndefined();
   });
 
+  // SYNTH-001 / SK-ADR-009 Decision 7 (D8): confirms the guard fires through
+  // the real `runPluginRegister` path (not just `loadPluginFromSource()`
+  // directly, already covered in `dynamicPluginRegistry.test.ts`) and that
+  // every pre-existing case above this one — none of which carries a
+  // `$synth` key — stays completely unaffected (it's the same fake importer
+  // + fixture helpers those tests already use).
+  it('a $synth-marked scaffold.json (dropped closures) is rejected, config untouched', async () => {
+    const sourcePath = resolvePath(CWD, 'marked.json');
+    const { store, writable } = fakeConfigStore();
+    const marked = { ...validDefinition('marked-id'), $synth: { droppedClosures: ['questions.name.validate'], module: 'scaffold.js' } };
+    const importSource = fakeImporter({ [sourcePath]: marked as unknown as ScaffoldDefinition });
+    const { deps, stderr } = baseDeps({ configStore: store, importSource, fileExists: (p) => p === sourcePath });
+
+    const code = await runPluginRegister('marked.json', {}, deps);
+
+    expect(code).toBe(1);
+    expect(stderr[0]).toMatch(/scaffold\.js/);
+    expect(writable.global).toBeUndefined();
+  });
+
   it('preserves other already-registered entries when adding a new one', async () => {
     const sourcePath = resolvePath(CWD, 'new-plugin.json');
     const { store, writable } = fakeConfigStore({

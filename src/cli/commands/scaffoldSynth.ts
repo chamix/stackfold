@@ -64,7 +64,7 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Command } from 'commander';
 import type { ScaffoldDefinition } from '../../core/authoring.js';
-import { synth, type SynthOptions } from '../../authoring/synth.js';
+import { synthWithModule } from '../../authoring/synth.js';
 
 export interface ScaffoldSynthCommandDependencies {
   stdout: (line: string) => void;
@@ -81,15 +81,23 @@ export function registerScaffoldSynthCommand(program: Command, deps: ScaffoldSyn
 
   scaffoldCommand
     .command('synth')
-    .description('Compiles a TS-authored scaffold module (scaffold.ts) into the canonical scaffold.json')
+    .description('Compiles a TS-authored scaffold module (scaffold.ts) into the canonical scaffold.json (+ scaffold.js when it has validate closures)')
     .argument('<dir>', 'Directory containing scaffold.ts (and any sibling .hbs files)')
-    .action(async (dir: string) => {
-      process.exitCode = await runScaffoldSynth(dir, deps);
+    .option(
+      '--no-emit-js',
+      'never emit scaffold.js — degrade to a stderr warning listing dropped validate closures instead (SK-ADR-009 Decision 2)'
+    )
+    .action(async (dir: string, options: { emitJs: boolean }) => {
+      process.exitCode = await runScaffoldSynth(dir, deps, { emitJs: options.emitJs });
     });
 }
 
 /** Returns the process exit code; never throws. */
-export async function runScaffoldSynth(dir: string, deps: ScaffoldSynthCommandDependencies): Promise<number> {
+export async function runScaffoldSynth(
+  dir: string,
+  deps: ScaffoldSynthCommandDependencies,
+  options: { emitJs?: boolean } = {}
+): Promise<number> {
   const { stdout, stderr } = deps;
   const scaffoldTsPath = resolve(dir, 'scaffold.ts');
   const outDir = dirname(scaffoldTsPath);
@@ -103,9 +111,23 @@ export async function runScaffoldSynth(dir: string, deps: ScaffoldSynthCommandDe
   }
 
   try {
-    const options: SynthOptions = { outDir };
-    const result = synth(definition, options);
+    const result = await synthWithModule(definition, {
+      outDir,
+      scaffoldTsPath,
+      emitJs: options.emitJs ?? true,
+      stderr,
+    });
     stdout(`stackfold scaffold synth: wrote ${result.outputPath}`);
+    if (result.modulePath) {
+      stdout(`stackfold scaffold synth: wrote ${result.modulePath}`);
+      stdout(
+        `stackfold scaffold synth: preserved validate closures (re-run with --no-emit-js to drop them instead): ${result.droppedClosures.join(', ')}`
+      );
+      stdout(
+        `stackfold scaffold synth: run "stackfold plugin register ${result.modulePath}" to register it with its validate closures intact`
+      );
+      stdout('stackfold scaffold synth: scaffold.json is the verified artifact WITHOUT validate — register scaffold.js instead.');
+    }
     return 0;
   } catch (err) {
     stderr(`stackfold scaffold synth: ${toMessage(err)}`);

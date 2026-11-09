@@ -4,6 +4,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runScaffoldSynth, type ScaffoldSynthCommandDependencies } from '../../src/cli/commands/scaffoldSynth.js';
+import { runPluginRegister, type PluginCommandDependencies } from '../../src/cli/commands/plugin.js';
+import { runInit, type InitCommandDependencies } from '../../src/cli/commands/init.js';
+import { DynamicPluginRegistry } from '../../src/infra/dynamicPluginRegistry.js';
+import { NodeFileWriter } from '../../src/infra/fs.js';
 import { compileScaffold, type ScaffoldDefinition } from '../../src/core/authoring.js';
 import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
 
@@ -11,6 +15,7 @@ import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluato
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const BUILDER_URL = pathToFileURL(join(REPO_ROOT, 'src/authoring/builder.ts')).href;
 const TEMPLATE_LOADER_URL = pathToFileURL(join(REPO_ROOT, 'src/authoring/templateLoader.ts')).href;
+const VALIDATION_URL = pathToFileURL(join(REPO_ROOT, 'src/core/validation.ts')).href;
 
 let root: string;
 let pluginDir: string;
@@ -193,5 +198,163 @@ export const scaffold = defineScaffold({
 
     expect(code).toBe(1);
     expect(deps.stderrLines.join('\n')).toContain('scaffold.ts');
+  });
+
+  // SYNTH-001 / SK-ADR-009 — reproduces EXP-001's real symptom end-to-end
+  // (acceptance criteria 1, 2, 10, 11): a scaffold.ts with a `validate`
+  // closure, synth-ed for real (real esbuild), registered for real
+  // (`stackfold plugin register`), then `stackfold init`-ed for real — the
+  // closure must be ACTIVE against the module, and the sibling
+  // `scaffold.json` (carrying `$synth`) must be rejected outright.
+  it(
+    'validate stays active when registering scaffold.js; the sibling $synth-marked scaffold.json is rejected',
+    async () => {
+      await writeFile(
+        join(pluginDir, 'scaffold.ts'),
+        `import { defineScaffold, file } from '${BUILDER_URL}';
+import { toValidate, pluginIdSchema } from '${VALIDATION_URL}';
+
+export default defineScaffold({
+  id: 'synth-cli-validate-fixture',
+  description: 'EXP-001 reproduction fixture — rejects a non-kebab-case name.',
+  questions: [{ id: 'name', message: 'Name', type: 'input', validate: toValidate(pluginIdSchema) }],
+  steps: [file('README.md', '{{name}}\\n')],
+});
+`,
+        'utf8'
+      );
+
+      const synthDeps = makeDeps();
+      const synthCode = await runScaffoldSynth(pluginDir, synthDeps);
+
+      expect(synthDeps.stderrLines).toEqual([]);
+      expect(synthCode).toBe(0);
+
+      const jsonPath = join(pluginDir, 'scaffold.json');
+      const jsPath = join(pluginDir, 'scaffold.js');
+      await expect(stat(jsPath)).resolves.toBeTruthy();
+      expect(synthDeps.stdoutLines.some((l) => l.includes(jsPath))).toBe(true);
+      expect(synthDeps.stdoutLines.some((l) => l.includes('plugin register'))).toBe(true);
+      // Blocking fix (code-reviewer round): the success/emit path must also
+      // list the closure paths preserved into scaffold.js, not just the
+      // `--no-emit-js` degradation branch.
+      expect(synthDeps.stdoutLines.some((l) => l.includes('questions.name.validate'))).toBe(true);
+
+      const jsonRaw = JSON.parse(await readFile(jsonPath, 'utf8')) as { $synth?: { droppedClosures: string[] } };
+      expect(jsonRaw.$synth?.droppedClosures).toEqual(['questions.name.validate']);
+
+      const evaluator = new JsonLogicExpressionEvaluator();
+
+      function pluginDeps(): PluginCommandDependencies & { stdoutLines: string[]; stderrLines: string[] } {
+        const stdoutLines: string[] = [];
+        const stderrLines: string[] = [];
+        return {
+          cwd: () => pluginDir,
+          evaluator,
+          stdout: (l) => stdoutLines.push(l),
+          stderr: (l) => stderrLines.push(l),
+          stdoutLines,
+          stderrLines,
+        };
+      }
+
+      // Criterion 11: registering the $synth-marked scaffold.json fails,
+      // config untouched.
+      const jsonRegisterDeps = pluginDeps();
+      const jsonRegisterCode = await runPluginRegister(jsonPath, { project: true }, jsonRegisterDeps);
+      expect(jsonRegisterCode).toBe(1);
+      expect(jsonRegisterDeps.stderrLines[0]).toMatch(/scaffold\.js/);
+
+      // Criterion 2/11: registering the module instead succeeds.
+      const jsRegisterDeps = pluginDeps();
+      const jsRegisterCode = await runPluginRegister(jsPath, { project: true }, jsRegisterDeps);
+      expect(jsRegisterCode).toBe(0);
+      expect(jsRegisterDeps.stderrLines).toEqual([]);
+
+      // Criterion 2: `stackfold init` with the registered module rejects
+      // "My_CLI" — the validate closure is really active.
+      const registry = new DynamicPluginRegistry({ evaluator, cwd: () => pluginDir });
+      const initTargetDir = join(root, 'initialized-project');
+      const initStderr: string[] = [];
+      const initDeps: InitCommandDependencies = {
+        registry,
+        ports: {
+          prompter: { ask: async () => ({}) },
+          fileWriter: new NodeFileWriter(),
+          processRunner: { run: async () => {} },
+        },
+        opener: { open: async () => {} },
+        cwd: () => root,
+        stdout: () => {},
+        stderr: (l) => initStderr.push(l),
+      };
+
+      const initCode = await runInit('synth-cli-validate-fixture', initTargetDir, initDeps, {
+        answer: ['name=My_CLI'],
+        open: false,
+      });
+
+      expect(initCode).toBe(1);
+      expect(initStderr.join('\n')).toMatch(/name|kebab-case/i);
+      await expect(stat(join(initTargetDir, 'README.md'))).rejects.toThrow();
+    },
+    30000
+  );
+
+  // Acceptance criterion 7 — `stackfold list`/`--help` never load esbuild.
+  // esbuild is only ever reachable through `realEsbuildEmitter.emit()`
+  // (`src/authoring/emitModule.ts`), itself only reachable from
+  // `synthWithModule()`'s module-emission branch
+  // (`src/authoring/synth.ts`), itself only reachable from `scaffold
+  // synth`'s own command handler — so a real child process running any
+  // other command (`list`, `--help`, etc.) genuinely never executes that
+  // code path. Verified structurally (per this task's own stated
+  // alternative to a full process-introspection check): `await
+  // import('esbuild')` appears nowhere outside `emitModule.ts`'s own
+  // `emit()` function body, and that function is never called at CLI
+  // startup or by any command other than `scaffold synth`.
+  it('esbuild is only ever lazily imported inside emitModule.ts\'s own emit() — never at any module top level', async () => {
+    const { readFile: read } = await import('node:fs/promises');
+    const emitModuleSrc = await read(join(REPO_ROOT, 'src/authoring/emitModule.ts'), 'utf8');
+    const synthSrc = await read(join(REPO_ROOT, 'src/authoring/synth.ts'), 'utf8');
+    const scaffoldSynthCliSrc = await read(join(REPO_ROOT, 'src/cli/commands/scaffoldSynth.ts'), 'utf8');
+
+    // The only static (top-level) `esbuild` reference anywhere in the
+    // authoring/CLI layer is the lazy `await import('esbuild')` call
+    // itself, inside emitModule.ts's own emit() function body.
+    expect(emitModuleSrc).toMatch(/await import\('esbuild'\)/);
+    expect(synthSrc).not.toContain("from 'esbuild'");
+    expect(synthSrc).not.toContain('import(\'esbuild\')');
+    expect(scaffoldSynthCliSrc).not.toContain('esbuild');
+
+    // No other src/ file statically imports/requires esbuild at all.
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const offenders: string[] = [];
+    const staticEsbuildImport = /\bimport\b[^;]*from\s*['"]esbuild['"]/;
+    const staticEsbuildRequire = /\brequire\(\s*['"]esbuild['"]\s*\)/;
+
+    function walk(dir: string): void {
+      for (const entry of readdirSync(dir)) {
+        const p = join(dir, entry);
+        if (statSync(p).isDirectory()) {
+          walk(p);
+          continue;
+        }
+        if (!p.endsWith('.ts') || p.endsWith('emitModule.ts')) continue;
+        // electron-ts's own `templates.ts` generates another plugin's
+        // *project* source as quoted string-literal lines (including a
+        // generated preload build script that itself imports esbuild) —
+        // that's generated-project content, never this repo's own static
+        // import, and a line-based regex can't tell the two apart from
+        // inside a quoted string. Everything else under src/ is real,
+        // non-templated TS source.
+        if (p.endsWith(join('plugins', 'electron-ts', 'templates.ts'))) continue;
+        const text = readFileSync(p, 'utf8');
+        if (staticEsbuildImport.test(text) || staticEsbuildRequire.test(text)) offenders.push(p);
+      }
+    }
+    walk(join(REPO_ROOT, 'src'));
+
+    expect(offenders).toEqual([]);
   });
 });
