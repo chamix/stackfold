@@ -57,6 +57,58 @@ describe('scaffoldDefinitionSchema', () => {
     expect(scaffoldDefinitionSchema.safeParse(bad).success).toBe(false);
   });
 
+  // SYNTH-002 (.agents/specs/synth-002-declarative-validation.md D4;
+  // SK-ADR-010): "constraints" is data, accepted strictly by
+  // questionDefinitionSchema, and malformed/misplaced constraints are
+  // rejected here, before compileScaffold()/synth() ever run.
+  describe('"constraints" (SYNTH-002 D4)', () => {
+    it('accepts a well-formed "constraints" on a "input" question', () => {
+      const withConstraints = {
+        ...VALID_DEFINITION,
+        questions: [
+          {
+            id: 'appName',
+            message: 'App name',
+            type: 'input',
+            constraints: { trim: true, minLength: { value: 1, message: 'required' }, rules: [{ matches: 'a', message: 'needs an a' }] },
+          },
+        ],
+      };
+      expect(scaffoldDefinitionSchema.safeParse(withConstraints).success).toBe(true);
+    });
+
+    it.each([
+      ['unknown top-level key', { bogus: true }],
+      ['non-boolean trim', { trim: 'yes' }],
+      ['minLength negative', { minLength: { value: -1, message: 'm' } }],
+      ['minLength > maxLength', { minLength: { value: 5, message: 'm' }, maxLength: { value: 1, message: 'm' } }],
+      ['rule with invalid regex', { rules: [{ matches: '(unterminated', message: 'm' }] }],
+      ['rule with empty message', { rules: [{ matches: 'a', message: '' }] }],
+    ])('rejects malformed constraints: %s', (_label, badConstraints) => {
+      const bad = {
+        ...VALID_DEFINITION,
+        questions: [{ id: 'appName', message: 'App name', type: 'input', constraints: badConstraints }],
+      };
+      expect(scaffoldDefinitionSchema.safeParse(bad).success).toBe(false);
+    });
+
+    it('rejects "constraints" declared on a "confirm"/"select" question', () => {
+      const badConfirm = {
+        ...VALID_DEFINITION,
+        questions: [
+          { id: 'ok', message: 'OK?', type: 'confirm', constraints: { minLength: { value: 1, message: 'm' } } },
+        ],
+      };
+      const result = scaffoldDefinitionSchema.safeParse(badConfirm);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.some((issue) => issue.message.includes('only valid on a "input" question'))).toBe(
+          true
+        );
+      }
+    });
+  });
+
   it('rejects a duplicate questions[].id, with no fragments involved (D6, Task 041 amendment)', () => {
     const withDuplicateIds = {
       ...VALID_DEFINITION,
@@ -127,6 +179,47 @@ describe('synth', () => {
     expect(() => synth(invalid, { outDir: pluginOutDir() })).toThrow(/thisActionDoesNotExist|smoke test/);
 
     await expect(stat(pluginOutDir())).rejects.toThrow();
+  });
+
+  // SYNTH-002 acceptance criteria 3/6: "constraints" is data, not a
+  // closure — it survives synth() into scaffold.json byte-for-byte and is
+  // never counted in droppedClosures; malformed constraints fail synth()
+  // the same way any other malformed ScaffoldDefinition does.
+  describe('"constraints" (SYNTH-002)', () => {
+    const DEFINITION_WITH_CONSTRAINTS: ScaffoldDefinition = {
+      ...VALID_DEFINITION,
+      questions: [
+        {
+          id: 'appName',
+          message: 'App name',
+          type: 'input',
+          default: 'my-app',
+          constraints: { trim: true, minLength: { value: 1, message: 'required' } },
+        },
+      ],
+    };
+
+    it('preserves "constraints" in scaffold.json verbatim, with an empty droppedClosures', async () => {
+      const result = synth(DEFINITION_WITH_CONSTRAINTS, { outDir: pluginOutDir() });
+
+      expect(result.droppedClosures).toEqual([]);
+
+      const raw = await readFile(result.outputPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      expect(parsed.questions[0].constraints).toEqual(DEFINITION_WITH_CONSTRAINTS.questions[0]!.constraints);
+    });
+
+    it('rejects malformed "constraints" at synth time, before any file is written', async () => {
+      const invalid: ScaffoldDefinition = {
+        ...VALID_DEFINITION,
+        questions: [
+          { id: 'appName', message: 'App name', type: 'input', constraints: { minLength: { value: -1, message: 'm' } } },
+        ],
+      };
+
+      expect(() => synth(invalid, { outDir: pluginOutDir() })).toThrow();
+      await expect(stat(pluginOutDir())).rejects.toThrow();
+    });
   });
 
   it('never overwrites/corrupts a pre-existing scaffold.json when a later synth() call fails', async () => {

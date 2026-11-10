@@ -41,13 +41,17 @@
  * verbatim, confirmed byte-identical to the old `web-app/
  * shared-questions.ts`'s own `toPackageName()`.
  *
- * `cli/index.ts` must compile this plugin from its own compiled
- * `scaffold.js`, not the synthesized `scaffold.json` — the same
- * `plugin-builder` precedent (`src/plugins/plugin-builder/scaffold.ts`'s
- * own header comment): `appName`/`description`/`author`'s `validate`
- * closures (`toValidate(appNameSchema/descriptionSchema/authorSchema)`)
- * are function values JSON cannot carry, and a JSON-compiled runtime path
- * would silently drop them.
+ * `appName`/`description`/`author` now declare `constraints` (SYNTH-002,
+ * `.agents/specs/synth-002-declarative-validation.md` D5; SK-ADR-010)
+ * instead of a `validate: toValidate(appNameSchema/descriptionSchema/
+ * authorSchema)` closure — data, not a closure, so all 3 survive `scaffold
+ * synth` into `scaffold.json` without loss. `cli/index.ts` still compiles
+ * this plugin from its own compiled `scaffold.js` rather than the
+ * synthesized `scaffold.json` (same precedent as `plugin-builder`'s own
+ * header comment) — changing that case-by-case special-casing is out of
+ * this task's scope (SYNTH-002 "Alcance"); either source now compiles to
+ * the exact same live validation, since `compileScaffold()` derives
+ * `validate` from `constraints` regardless of which file it was read from.
  *
  * Security (`.claude/knowledge/nodejs/security.md` "Untrusted code
  * execution"): same trusted-author build-time threat model as every other
@@ -59,7 +63,7 @@
  */
 import { defineScaffold, step } from '../../authoring/builder.js';
 import { composeFragments, mountFragment } from '../../authoring/fragment.js';
-import { appNameSchema, authorSchema, descriptionSchema, toValidate } from '../../core/validation.js';
+import { appNameConstraints, authorConstraints, descriptionConstraints } from '../../core/validation.js';
 import { baseTsFragment } from './fragments/base-ts.js';
 import { eslintFragment } from './fragments/eslint.js';
 import { standaloneHtmlFragment } from './fragments/standalone-html.js';
@@ -185,21 +189,21 @@ export default defineScaffold({
       message: 'Application name',
       type: 'input',
       default: DEFAULT_APP_NAME,
-      validate: toValidate(appNameSchema),
+      constraints: appNameConstraints,
     },
     {
       id: 'description',
       message: 'Short description',
       type: 'input',
       default: DEFAULT_DESCRIPTION,
-      validate: toValidate(descriptionSchema),
+      constraints: descriptionConstraints,
     },
     {
       id: 'author',
       message: 'Author (optional, used for package.json and an MIT LICENSE)',
       type: 'input',
       default: DEFAULT_AUTHOR,
-      validate: toValidate(authorSchema),
+      constraints: authorConstraints,
     },
     {
       id: 'appType',

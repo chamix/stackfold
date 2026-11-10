@@ -41,6 +41,23 @@ function brokenDefinitionUnknownAction(id: string): ScaffoldDefinition {
   };
 }
 
+/** SYNTH-002 fail-fast case: a `constraints` with a `minLength` the interpreter itself rejects (negative value). */
+function brokenDefinitionMalformedConstraints(id: string): ScaffoldDefinition {
+  return {
+    id,
+    description: `${id} description`,
+    questions: [
+      {
+        id: 'appName',
+        message: 'App name?',
+        type: 'input',
+        constraints: { minLength: { value: -1, message: 'bad' } },
+      },
+    ],
+    steps: [],
+  };
+}
+
 /** In-memory fake of `PluginConfigStore` — no real disk I/O. */
 function fakeConfigStore(
   levels: Partial<Record<'global' | 'project', { filepath: string; entries: Record<string, PluginConfigEntry> }>>
@@ -128,6 +145,24 @@ describe('loadPluginFromSource', () => {
     await expect(
       loadPluginFromSource('broken.js', 'scaffold-module', BASE_DIR, evaluator, importSource)
     ).rejects.toThrow(/thisActionDoesNotExist/);
+  });
+
+  // SYNTH-002 acceptance criterion 3 (.agents/specs/
+  // synth-002-declarative-validation.md): malformed "constraints" fails at
+  // register time too — compileScaffold() throws synchronously (eager
+  // compilation, core/authoring.ts), well before any smoke test or
+  // questions() call.
+  it('throws a real error when a question declares malformed "constraints" (SYNTH-002)', async () => {
+    const calls: string[] = [];
+    const brokenPath = resolvePath(BASE_DIR, 'broken-constraints.js');
+    const importSource = fakeImporter(
+      { [brokenPath]: brokenDefinitionMalformedConstraints('broken-constraints') },
+      calls
+    );
+
+    await expect(
+      loadPluginFromSource('broken-constraints.js', 'scaffold-module', BASE_DIR, evaluator, importSource)
+    ).rejects.toThrow(/minLength/);
   });
 
   // SYNTH-001 / SK-ADR-009 Decision 7 (D8) — the ergonomics guard: a

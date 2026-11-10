@@ -10,25 +10,93 @@
       "id": "pluginId",
       "message": "Plugin id (kebab-case, e.g. \"my-cool-plugin\")",
       "type": "input",
-      "default": "my-plugin"
+      "default": "my-plugin",
+      "constraints": {
+        "trim": true,
+        "minLength": {
+          "value": 1,
+          "message": "Plugin id must not be empty."
+        },
+        "maxLength": {
+          "value": 100,
+          "message": "Plugin id must be 100 characters or fewer."
+        },
+        "rules": [
+          {
+            "matches": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+            "message": "Plugin id must be kebab-case: lowercase letters/digits, single hyphens, starting with a letter."
+          }
+        ]
+      }
     },
     {
       "id": "displayName",
       "message": "Display name (shown in `stackfold list`/`info`)",
       "type": "input",
-      "default": "My Plugin"
+      "default": "My Plugin",
+      "constraints": {
+        "trim": true,
+        "maxLength": {
+          "value": 200,
+          "message": "Description must be 200 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "Description must not contain control characters."
+          },
+          {
+            "notMatches": "\\n",
+            "message": "Description must be a single line."
+          }
+        ]
+      }
     },
     {
       "id": "description",
       "message": "Short description (shown in listings)",
       "type": "input",
-      "default": "A stackfold plugin."
+      "default": "A stackfold plugin.",
+      "constraints": {
+        "trim": true,
+        "maxLength": {
+          "value": 200,
+          "message": "Description must be 200 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "Description must not contain control characters."
+          },
+          {
+            "notMatches": "\\n",
+            "message": "Description must be a single line."
+          }
+        ]
+      }
     },
     {
       "id": "author",
       "message": "Author",
       "type": "input",
-      "default": ""
+      "default": "",
+      "constraints": {
+        "trim": true,
+        "maxLength": {
+          "value": 150,
+          "message": "Author must be 150 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "Author must not contain control characters."
+          },
+          {
+            "notMatches": "\\n",
+            "message": "Author must be a single line."
+          }
+        ]
+      }
     }
   ],
   "steps": [

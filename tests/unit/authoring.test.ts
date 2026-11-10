@@ -143,6 +143,98 @@ describe('compileScaffold — identity passthrough', () => {
   });
 });
 
+// SYNTH-002 (.agents/specs/synth-002-declarative-validation.md D3;
+// SK-ADR-010): `compileScaffold()` derives `validate` from a question's
+// declarative `constraints`. Same-reference invariant (acceptance
+// criterion 5) for questions WITHOUT constraints keeps
+// `questions() toEqual def.questions` (above, "identity passthrough")
+// green — that test is never edited here.
+describe('compileScaffold — "constraints" (SYNTH-002 D3)', () => {
+  it('a question without "constraints" is returned as the exact same reference (acceptance criterion 5)', () => {
+    const q = { id: 'plain', message: 'Plain?', type: 'input' as const };
+    const plugin = compileScaffold(definition({ id: 'no-constraints', questions: [q] }), new FakeEvaluator());
+    expect(plugin.questions()[0]).toBe(q);
+  });
+
+  it('a question WITH "constraints" gets a derived "validate" (not the same reference)', () => {
+    const q = {
+      id: 'named',
+      message: 'Name?',
+      type: 'input' as const,
+      constraints: { minLength: { value: 1, message: 'required' } },
+    };
+    const plugin = compileScaffold(definition({ id: 'with-constraints', questions: [q] }), new FakeEvaluator());
+    const compiled = plugin.questions()[0]!;
+
+    expect(compiled).not.toBe(q);
+    expect(compiled.id).toBe('named');
+    expect(typeof compiled.validate).toBe('function');
+    expect(compiled.validate!('')).toBe('required');
+    expect(compiled.validate!('ok')).toBe(true);
+  });
+
+  it('composes constraints + an explicit "validate": constraints run first and short-circuit before "validate" ever runs', () => {
+    let validateCalls = 0;
+    const q = {
+      id: 'composed',
+      message: 'Composed?',
+      type: 'input' as const,
+      constraints: { minLength: { value: 3, message: 'too short' } },
+      validate: (value: unknown) => {
+        validateCalls++;
+        return value === 'blocked' ? 'blocked by custom validate' : true;
+      },
+    };
+    const plugin = compileScaffold(definition({ id: 'composed-scaffold', questions: [q] }), new FakeEvaluator());
+    const compiled = plugin.questions()[0]!;
+
+    // Fails constraints (too short) -> the original validate is never called.
+    expect(compiled.validate!('ab')).toBe('too short');
+    expect(validateCalls).toBe(0);
+
+    // Passes constraints, then the original validate runs and can still fail.
+    expect(compiled.validate!('blocked')).toBe('blocked by custom validate');
+    expect(validateCalls).toBe(1);
+
+    // Passes both.
+    expect(compiled.validate!('fine')).toBe(true);
+    expect(validateCalls).toBe(2);
+  });
+
+  it('fails fast at compileScaffold() time (never at answer time) on malformed constraints', () => {
+    const q = {
+      id: 'bad',
+      message: 'Bad?',
+      type: 'input' as const,
+      constraints: { minLength: { value: -1, message: 'm' } },
+    };
+    expect(() => compileScaffold(definition({ id: 'bad-scaffold', questions: [q] }), new FakeEvaluator())).toThrow();
+  });
+
+  it('fails fast when "constraints" is declared on a non-"input" question (confirm/select)', () => {
+    const confirmQuestion = {
+      id: 'agree',
+      message: 'Agree?',
+      type: 'confirm' as const,
+      constraints: { minLength: { value: 1, message: 'm' } },
+    };
+    expect(() =>
+      compileScaffold(definition({ id: 'bad-confirm', questions: [confirmQuestion] }), new FakeEvaluator())
+    ).toThrow(/only valid on a "input" question/);
+
+    const selectQuestion = {
+      id: 'choice',
+      message: 'Choice?',
+      type: 'select' as const,
+      choices: ['a', 'b'],
+      constraints: { minLength: { value: 1, message: 'm' } },
+    };
+    expect(() =>
+      compileScaffold(definition({ id: 'bad-select', questions: [selectQuestion] }), new FakeEvaluator())
+    ).toThrow(/only valid on a "input" question/);
+  });
+});
+
 describe('compileScaffold — compose actions compile to files via composeBlueprint()', () => {
   it('a single writeFile step produces one file', () => {
     const def = definition({

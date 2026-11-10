@@ -37,10 +37,12 @@
  */
 import Handlebars from 'handlebars';
 import { z } from 'zod';
+import { compileConstraints } from './constraints.js';
 import { composeBlueprint, type FileContribution, type MergeStrategy } from './composition.js';
 import type { ExpressionEvaluator } from './ports.js';
 import { toBridgeGlobal, toPackageName } from './stringTransforms.js';
 import type {
+  AnswerValue,
   Answers,
   HookHandler,
   HookName,
@@ -164,6 +166,12 @@ export interface ScaffoldDefinition {
  */
 export function compileScaffold(definition: ScaffoldDefinition, evaluator: ExpressionEvaluator): StackfoldPlugin {
   const hooks = definition.hooks ? compileHooks(definition.hooks, evaluator) : undefined;
+  // Compiled eagerly, here, once per compileScaffold() call — never lazily
+  // inside questions() and never per answer (SYNTH-002 D3) — so a malformed
+  // `constraints` (or `constraints` on a non-"input" question) throws
+  // synchronously at plugin-compile time, matching the same fail-fast
+  // contract every other part of a `ScaffoldDefinition` already has.
+  const compiledQuestions = compileQuestions(definition.questions);
 
   return {
     id: definition.id,
@@ -172,7 +180,7 @@ export function compileScaffold(definition: ScaffoldDefinition, evaluator: Expre
     ...(hooks ? { hooks } : {}),
 
     questions(): QuestionDefinition[] {
-      return definition.questions;
+      return compiledQuestions;
     },
 
     buildBlueprint(answers: Answers): ProjectBlueprint {
@@ -235,6 +243,41 @@ function compileHooks(
   }
 
   return compiled;
+}
+
+/**
+ * Maps `questions`, deriving `validate` from `constraints` where present
+ * (SYNTH-002 D3/SK-ADR-010): a question without `constraints` is returned
+ * as the exact same reference (invariant 5 of the spec — zero behavior
+ * change, and the same-reference check `tests/unit/authoring.test.ts`'s
+ * `questions() toEqual def.questions` relies on). A question WITH
+ * `constraints` gets a shallow copy whose `validate` runs the compiled
+ * constraints first, short-circuiting on the first failure before the
+ * original `validate` (if any) ever runs — composition order per the
+ * spec's invariant 7.
+ */
+function compileQuestions(questions: QuestionDefinition[]): QuestionDefinition[] {
+  return questions.map((question) => {
+    if (!question.constraints) return question;
+
+    if (question.type !== 'input') {
+      throw new Error(
+        `Question "${question.id}": "constraints" is only valid on a "input" question, got type "${question.type}"`
+      );
+    }
+
+    const checkConstraints = compileConstraints(question.constraints);
+    const originalValidate = question.validate;
+
+    return {
+      ...question,
+      validate: (value: AnswerValue): true | string => {
+        const verdict = checkConstraints(value);
+        if (verdict !== true) return verdict;
+        return originalValidate ? originalValidate(value) : true;
+      },
+    };
+  });
 }
 
 function isGatedOff(step: ActionStep, evaluator: ExpressionEvaluator, answers: Answers): boolean {
