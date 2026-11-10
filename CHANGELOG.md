@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-11-10
+
+### Added
+
+- **`stackfold scaffold synth` now emits a `scaffold.js` module when a question
+  declares a `validate` closure.** `scaffold.json` cannot represent functions, so
+  closures used to be dropped silently. The sibling module keeps them; register
+  that module (`stackfold plugin register <dir>/scaffold.js`). `scaffold.json`
+  carries a `$synth` key listing the closures it lost. Pass `--no-emit-js` to skip
+  the module and get a warning instead.
+- **Declarative question `constraints`** (`trim`, `minLength`, `maxLength`,
+  `rules` with `matches`/`notMatches`) for `input` questions. Unlike `validate`,
+  they are plain data, so they survive `synth` into `scaffold.json` and work in a
+  hand-written `scaffold.json`. When a question has both, `constraints` run first.
+- `stackfold/authoring` now exports `appNameConstraints`, `descriptionConstraints`,
+  `authorConstraints` and `pluginIdConstraints`, the declarative equivalents of the
+  existing `*Schema` exports.
+- `stackfold/authoring`: `file()` now accepts `jsEscapeKeys`, `htmlEscapeKeys` and
+  `scriptCloseEscapeKeys`, like `writeFile`. Previously they were silently ignored
+  when passed without type checking (for example from a plain JavaScript module).
+
+### Changed
+
+- `stackfold plugin register` rejects a `scaffold.json` whose `$synth.droppedClosures`
+  is not empty. The error points to the sibling `scaffold.js`, or asks you to re-run
+  `synth` without `--no-emit-js` when no module was emitted.
+- The project-level plugin config (`--project`) is now found from any subdirectory
+  of the project: the search goes up to the first directory with a `package.json`.
+  `plugin register --project` run from a subdirectory writes to the config it finds;
+  if there is none, it creates `.stackfold-pluginsrc.json` in the current directory.
+- Added `esbuild` as a runtime dependency (used by `scaffold synth`).
+- README: new documentation for plugin authors (the `scaffold.js` contract,
+  where `register` writes, the `plugin-scaffold` directory rule, `validate`
+  signature, helper reference).
+
 ## [2.3.0] - 2026-11-07
 
 ### Added
