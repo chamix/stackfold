@@ -16,7 +16,12 @@
  *   - Global: a fixed path, `~/.stackfoldrc.json`, loaded via
  *     `cosmiconfig(...).load(...)` — never `.search()`, so "which config"
  *     never depends on the invoking cwd.
- *   - Project: `cosmiconfig(...).search(cwd)`, the standard upward search.
+ *   - Project: `cosmiconfig(..., { searchStrategy: 'project' }).search(cwd)`
+ *     — a real upward search from `cwd`, stopping at (and including) the
+ *     first ancestor directory that itself contains a `package.json`, or
+ *     the filesystem root if none has one. A `package.json` with its own
+ *     `"stackfold-plugins"` property counts as a found config file in its
+ *     own right.
  *   - An id present at both levels: the project entry wins (last-merged
  *     into `#resolveEntries()`'s map, see below).
  *
@@ -257,7 +262,7 @@ async function findExistingFilepath(level: PluginConfigLevel, cwd: string): Prom
     }
   }
 
-  const explorer = cosmiconfig(PLUGIN_CONFIG_MODULE_NAME);
+  const explorer = cosmiconfig(PLUGIN_CONFIG_MODULE_NAME, { searchStrategy: 'project' });
   const result = await explorer.search(cwd);
   if (!result || result.isEmpty) return undefined;
   return result.filepath;
@@ -267,8 +272,9 @@ async function resolveWriteFilepath(level: PluginConfigLevel, cwd: string): Prom
   if (level === 'global') return GLOBAL_CONFIG_PATH;
 
   const existing = await findExistingFilepath('project', cwd);
-  if (existing && !existing.endsWith('package.json')) return existing;
-  return join(cwd, DEFAULT_PROJECT_CONFIG_FILENAME);
+  if (!existing) return join(cwd, DEFAULT_PROJECT_CONFIG_FILENAME);
+  if (!existing.endsWith('package.json')) return existing;
+  return join(dirname(existing), DEFAULT_PROJECT_CONFIG_FILENAME);
 }
 
 async function readEntries(filepath: string): Promise<Record<string, PluginConfigEntry>> {
@@ -313,7 +319,7 @@ export const realPluginConfigStore: PluginConfigStore = {
 
 export interface DynamicPluginRegistryDependencies {
   evaluator: ExpressionEvaluator;
-  /** Base for the project-level `cosmiconfig(...).search()`. */
+  /** Base the project-level `cosmiconfig(...).search()` ascends from. */
   cwd: () => string;
   /** Defaults to `(line) => console.error(line)`. */
   stderr?: (line: string) => void;

@@ -193,8 +193,14 @@ user-chosen label. A `.ts`/`.tsx` source is rejected outright — run
 Config lives at two levels, both resolved via cosmiconfig:
 
 - **Global** — `~/.stackfoldrc.json`, available in every project.
-- **Project** — the nearest config file found searching upward from the
-  current directory; wins over the global config on a same-id
+- **Project** — the nearest config file found by searching upward from
+  the current directory, stopping at (and including) the first ancestor
+  directory that contains a `package.json`, or the filesystem root if
+  none does. `plugin register --project` run from a subdirectory writes
+  to that existing ancestor config file rather than creating a new one.
+  An intermediate directory with its own `package.json` stops the
+  search there, so a project config never leaks across that boundary.
+  The project config wins over the global config on a same-id
   collision.
 
 A relative local path is resolved against the directory you run
