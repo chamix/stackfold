@@ -8,6 +8,8 @@ import {
   runCommand,
   step,
 } from '../../src/authoring/builder.js';
+import { compileScaffold, type ScaffoldDefinition } from '../../src/core/authoring.js';
+import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
 
 describe('defineScaffold', () => {
   it('builds a ScaffoldDefinition matching its input field-for-field', () => {
@@ -118,6 +120,55 @@ describe('file()', () => {
 
     expect(withWhen).toEqual({ action: 'writeFile', params: { path: 'a.txt', content: 'x' }, when: { var: 'includeA' } });
     expect('when' in withoutWhen).toBe(false);
+  });
+
+  // FIX-001: jsEscapeKeys/htmlEscapeKeys/scriptCloseEscapeKeys were silently
+  // dropped by file() even though the underlying writeFile action already
+  // supports them (identical shape/semantics to jsonEscapeKeys above).
+  it.each(['jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'] as const)(
+    'includes "%s" only when supplied',
+    (key) => {
+      const withKey = file('a.txt', '{{x}}', { [key]: ['x'] });
+      const withoutKey = file('a.txt', '{{x}}');
+
+      expect(withKey).toEqual({
+        action: 'writeFile',
+        params: { path: 'a.txt', content: '{{x}}', [key]: ['x'] },
+      });
+      expect(key in (withoutKey.params as Record<string, unknown>)).toBe(false);
+    }
+  );
+
+  // Real-compile-path equivalence (no doubles): a file()-built step and the
+  // raw step('writeFile', ...) form must produce byte-identical rendered
+  // output for each of the 3 new keys — this is what actually proves the
+  // keys are no longer silently discarded at runtime (TS2561 only flags the
+  // raw literal form at the type level; file() with an excess property was
+  // never a compile error for an author, just a silent no-op).
+  describe('real-compile-path equivalence with raw step("writeFile", ...) for each new escape key', () => {
+    const evaluator = new JsonLogicExpressionEvaluator();
+
+    function renderedContent(definitionSteps: ReturnType<typeof file>[]): string {
+      const definition: ScaffoldDefinition = {
+        id: 'fixture',
+        description: 'fixture',
+        questions: [{ id: 'x', message: 'x', type: 'input' }],
+        steps: definitionSteps,
+      };
+      const plugin = compileScaffold(definition, evaluator);
+      return plugin.buildBlueprint({ x: "a'b\"c</script>d" }).files[0]!.content.toString();
+    }
+
+    it.each(['jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'] as const)(
+      '%s: file() output matches raw step("writeFile", ...) output',
+      (key) => {
+        const content = '{{x}}';
+        const viaFile = renderedContent([file('OUT', content, { [key]: ['x'] })]);
+        const viaRawStep = renderedContent([step('writeFile', { path: 'OUT', content, [key]: ['x'] })]);
+
+        expect(viaFile).toBe(viaRawStep);
+      }
+    );
   });
 });
 

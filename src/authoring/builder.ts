@@ -82,6 +82,9 @@ export type WriteFileStrategy = 'exclusive' | 'json-merge' | 'append';
 export interface FileStepOptions extends StepOptions {
   strategy?: WriteFileStrategy;
   jsonEscapeKeys?: string[];
+  jsEscapeKeys?: string[];
+  htmlEscapeKeys?: string[];
+  scriptCloseEscapeKeys?: string[];
 }
 
 /**
@@ -94,7 +97,7 @@ export interface FileStepOptions extends StepOptions {
  * re-enforce it, it just doesn't get in the way of it).
  */
 export function file(path: string, content: string, opts: FileStepOptions = {}): ActionStep {
-  const { when, strategy, jsonEscapeKeys } = opts;
+  const { when, strategy, jsonEscapeKeys, jsEscapeKeys, htmlEscapeKeys, scriptCloseEscapeKeys } = opts;
   return withWhen(
     {
       action: 'writeFile',
@@ -103,6 +106,9 @@ export function file(path: string, content: string, opts: FileStepOptions = {}):
         content,
         ...(strategy ? { strategy } : {}),
         ...(jsonEscapeKeys ? { jsonEscapeKeys } : {}),
+        ...(jsEscapeKeys ? { jsEscapeKeys } : {}),
+        ...(htmlEscapeKeys ? { htmlEscapeKeys } : {}),
+        ...(scriptCloseEscapeKeys ? { scriptCloseEscapeKeys } : {}),
       },
     },
     when
