@@ -10,6 +10,7 @@ import {
   type Fragment,
 } from '../../src/authoring/fragment.js';
 import { JsonLogicExpressionEvaluator } from '../../src/infra/expressionEvaluator.js';
+import { file } from '../../src/authoring/builder.js';
 
 const evaluator = new JsonLogicExpressionEvaluator();
 
@@ -423,6 +424,26 @@ describe('mountFragment — id-bearing literalKeys rewrite (Task 047)', () => {
     expect(outerStep['from']).toBe('outer__inner__packageName');
     expect(outerStep['to']).toBe('outer__bridgeGlobal');
   });
+
+  // FIX-001: a file()-built step carrying one of the 3 keys that were
+  // previously silently dropped by file() is renamed exactly like the
+  // equivalent raw step('writeFile', ...) case above, via the real file()
+  // builder (not a hand-written ActionStep literal).
+  it.each(['jsEscapeKeys', 'htmlEscapeKeys', 'scriptCloseEscapeKeys'] as const)(
+    'rewrites a local id inside a file()-built step\'s "%s" to its namespaced form',
+    (escapeKeyField) => {
+      const fragment = (): Fragment => ({
+        questions: [q('author')],
+        steps: [file('OUT', '{{author}}', { [escapeKeyField]: ['author'] })],
+      });
+
+      const mounted = mountFragment(fragment, {}, { namespace: 'license' });
+      const step = mounted.steps[0] as ActionStep;
+      const params = step.params as Record<string, unknown>;
+
+      expect(params[escapeKeyField]).toEqual(['license__author']);
+    }
+  );
 });
 
 describe('mountFragment — JSONLogic rewrite engine (D5, ported spike battery)', () => {

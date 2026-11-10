@@ -42,8 +42,7 @@ another plugin, not touching the core.
 
 ## Built-in plugins
 
-Run `stackfold list` for the live, authoritative list. As of this
-release:
+Run `stackfold list` for the live, authoritative list. Currently:
 
 - **`electron-ts`** — Electron + TypeScript desktop app shell (sandboxed
   windows, external-link policy, narrow preload bridge), with optional
@@ -55,9 +54,7 @@ release:
   is init-only, so there's no forced migration for either.
 - **`web-app-stackfold`** — a web app: a single, dependency-free
   standalone HTML file, or a Vite-powered SPA in React, Vue, or plain
-  vanilla TS. One `appType` question replaces what used to be two
-  separate plugins (`web-app-spa` and `web-app-standalone-html`, removed
-  in this release — see [CHANGELOG](./CHANGELOG.md)).
+  vanilla TS. One `appType` question selects the variant.
 - **`plugin-builder`** — stackfold's own self-extension tool: scaffolds a
   brand-new *built-in* plugin (as a TS `scaffold.ts` + synth) and patches
   it straight into stackfold's own plugin registry. Only useful from a
@@ -170,6 +167,37 @@ must stay next to `scaffold.js` wherever it's registered from — and if
 you publish the plugin to npm, make sure those `.hbs` files are listed in
 `package.json`'s `files`, or they won't ship.
 
+### The `scaffold.js` contract
+
+`scaffold.js` is an ordinary ES module. Its default export must be a
+single `ScaffoldDefinition` — normally built via `defineScaffold(...)`
+(see [`stackfold/authoring` helpers](#stackfoldauthoring-helpers) below).
+A few rules follow directly from that:
+
+- A `.ts` file given directly to `stackfold plugin register` is rejected
+  outright, with a message pointing you at `stackfold scaffold synth
+  <dir>` first (see [`stackfold scaffold synth
+  <dir>`](#stackfold-scaffold-synth-dir) above) — register the `.js`/`.json`
+  output, never the `.ts` source.
+- Any `stackfold/authoring` import inside `scaffold.js` resolves from the
+  plugin's own directory, following Node's normal module resolution — the
+  `stackfold` package must be reachable from there (e.g. an installed
+  dependency), not from wherever `stackfold` itself happens to run from.
+- A sibling `.hbs` template loads via `loadTemplate(import.meta.dirname,
+  ...)`, so it must stay next to the module wherever that module is
+  registered from.
+- Add `"type": "module"` to the plugin's own `package.json` (what
+  `plugin-scaffold` itself generates), or use a `.mjs` extension — don't
+  rely on Node's ESM-syntax auto-detection.
+
+Three literal error messages cover the broken cases above:
+
+| Situation | Error |
+|---|---|
+| The module has no default export | `stackfold plugin register: "<path>" has no default export` |
+| A `.ts` file is given directly to `stackfold plugin register` | `stackfold plugin register: "<path>" is a TypeScript scaffold source — TS is authoring-time only, never a runtime contract. Run "stackfold scaffold synth <dir>" first, then register the resulting scaffold.json.` |
+| A `stackfold/authoring` import can't resolve from the plugin's own directory | `stackfold plugin register: Cannot find package 'stackfold' imported from <path>` |
+
 ## External plugins
 
 Register a plugin stackfold doesn't ship with, without editing
@@ -203,6 +231,10 @@ Config lives at two levels, both resolved via cosmiconfig:
   The project config wins over the global config on a same-id
   collision.
 
+When `--project` finds no existing project-level config to write to, it
+creates `.stackfold-pluginsrc.json` in the current directory instead.
+Either way, `stackfold plugin register` prints the exact file it wrote to.
+
 A relative local path is resolved against the directory you run
 `register` from, and the entry is stored so it keeps pointing at that same
 file: an absolute path in the global config, a path relative to the config
@@ -223,6 +255,12 @@ register anywhere:
 ```bash
 stackfold init plugin-scaffold ./my-plugin
 ```
+
+**The directory argument must match the `pluginId` answer** (default
+`my-plugin`, which is why the example above works). If it doesn't, the
+plugin's `postWrite` hook fails with a message ending in `Re-run:
+stackfold init plugin-scaffold <pluginId>` — rerun `init` with the
+directory and the `pluginId` answer set to the same value.
 
 It scaffolds a new, standalone plugin at `./my-plugin/`, authored as a TS
 `scaffold.ts` (importing the authoring DSL from the installed `stackfold`
@@ -257,14 +295,12 @@ Terraform-module-style so two fragments never collide on a question id.
 
 This authoring system is how 4 of the 5 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
-`plugin-scaffold`) are built today. `electron-ts` remains hand-written on purpose: it's the
-reference implementation the declarative system is checked against, so
-if the declarative approach can't express something `electron-ts` does
-by hand, that's a signal the authoring system still has a gap to
-close. Both are kept side by side indefinitely — see
-[Built-in plugins](#built-in-plugins) above — and `stackfold` itself is
-init-only, so neither needs to migrate to the other. See the
-[CHANGELOG](./CHANGELOG.md) for how this evolved release by release.
+`plugin-scaffold`) are built today. `electron-ts` is hand-written instead,
+via the `questions()`/`buildBlueprint()` plugin contract directly. Both are
+kept side by side indefinitely — see [Built-in plugins](#built-in-plugins)
+above — and `stackfold` itself is init-only, so neither needs to migrate to
+the other. See the [CHANGELOG](./CHANGELOG.md) for the full release
+history.
 
 ## Authoring a plugin without a repo checkout
 
@@ -292,14 +328,48 @@ JSON data, not a closure, so they work fine in a hand-written
 
 ### Package entry points
 
-`stackfold` is a CLI first. Its only programmatic entry point is
+`stackfold` is a CLI first. Its only importable package entry point is
 `stackfold/authoring` (`defineScaffold`, `file`, `loadTemplate`, ...), the
-surface a TS-authored plugin imports. The `exports` map is closed on
-purpose (SK-ADR-005), so `import 'stackfold'` and deep imports such as
-`stackfold/dist/...` or `stackfold/package.json` fail with
-`ERR_PACKAGE_PATH_NOT_EXPORTED`. That keeps `dist/` free to change between
-releases; if you need something that isn't exported, open an issue instead
-of reaching into `dist/`.
+surface a TS-authored plugin imports. `import 'stackfold'` and deep
+imports such as `stackfold/dist/...` or `stackfold/package.json` fail with
+`ERR_PACKAGE_PATH_NOT_EXPORTED`. If you need something that isn't
+exported, open an issue instead of reaching into `dist/`.
+
+### `stackfold/authoring` helpers
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `defineScaffold` | function | Builds a `ScaffoldDefinition` from `{ id, description, help?, questions, steps, hooks?, mainFile? }`. |
+| `file` | function | Builds a `writeFile` step — see the options table below. |
+| `mkdir` | function | Builds a `mkdir` step: `mkdir(path, { when? })`. |
+| `runCommand` | function | Builds a `runCommand` step: `runCommand(command, { args?, when? })`. |
+| `npmInstall` | function | Builds an `npmInstall` step (no params). |
+| `gitInit` | function | Builds a `gitInit` step (no params). |
+| `step` | function | Escape hatch for any other registered action: `step(action, params, { when? })`. |
+| `loadTemplate` | function | Reads a sibling `.hbs` template: `loadTemplate(import.meta.dirname, 'templates/x.hbs')`. |
+| `toValidate` | function | Adapts a zod string schema into a `validate` closure. |
+| `appNameSchema` / `descriptionSchema` / `authorSchema` / `pluginIdSchema` | zod schema | Reusable schemas for common question answers. |
+| `appNameConstraints` / `descriptionConstraints` / `authorConstraints` / `pluginIdConstraints` | `QuestionConstraints` | Declarative equivalents of the schemas above, assignable directly to a question's `constraints` field. |
+| `MAX_PACKAGE_NAME_LENGTH` | constant | The length limit the npm-package-name-shaped schemas/constraints above enforce. |
+
+`defineScaffold`'s own input type (`DefineScaffoldInput`), plus each step
+helper's options type (`FileStepOptions`, `RunCommandStepOptions`,
+`StepOptions`, `WriteFileStrategy`), are also exported for type-only use.
+
+`file`'s options (`FileStepOptions`):
+
+| Option | Type | Notes |
+|---|---|---|
+| `strategy` | `"exclusive"` \| `"json-merge"` \| `"append"` | What happens on a path collision with another step. Defaults to `"exclusive"` (a collision is an error). |
+| `jsonEscapeKeys` | `string[]` | Answer ids (not file paths) whose value is escaped for a JSON-string position before rendering. |
+| `jsEscapeKeys` | `string[]` | Answer ids whose value is escaped for a single-quoted-JS-string position. |
+| `htmlEscapeKeys` | `string[]` | Answer ids whose value is escaped for an HTML position. |
+| `scriptCloseEscapeKeys` | `string[]` | Answer ids whose value is escaped for a Vue SFC `</script>`-safe position. |
+| `when` | `boolean` \| JSON Logic expression | Skips the step entirely when it evaluates falsy. |
+
+**The four `*EscapeKeys` arrays name question/answer ids, not arbitrary
+strings** — each entry must match a question's `id` whose answer value
+gets escaped, never a free-form string of your choosing.
 
 ### The `ScaffoldDefinition` shape
 
@@ -340,6 +410,22 @@ A `scaffold.json` is one JSON object with these top-level fields:
 > the exception to this**: it's plain JSON data, not a closure, so it
 > survives `scaffold synth` into `scaffold.json` and works in a
 > hand-written `scaffold.json` with no `scaffold.js` at all.
+
+`validate`'s signature is `(value: AnswerValue) => true | string`, where
+`AnswerValue = string | boolean | number`. It must be pure (no I/O), and
+returns either `true` or a string error message. When a question declares
+both `constraints` and `validate`, `constraints` runs first — `validate`
+only runs if `constraints` passes (see `QuestionConstraints` below).
+
+`stackfold/authoring` doesn't export `AnswerValue`/`QuestionDefinition`
+directly, so reference `validate`'s type through `DefineScaffoldInput`
+instead:
+
+```ts
+import type { DefineScaffoldInput } from 'stackfold/authoring';
+
+type Validate = NonNullable<DefineScaffoldInput['questions'][number]['validate']>;
+```
 
 #### `QuestionConstraints`
 
@@ -577,9 +663,9 @@ Four ports define the boundary between `core/` and `infra/`:
 `Prompter`, `FileWriter`, `ProcessRunner`, and `ExpressionEvaluator`
 (a restricted, non-Turing-complete [json-logic-js](https://github.com/jwadhams/json-logic-js)
 expression, never an `eval`). Plugin *resolution* goes through a fourth
-port, `PluginRegistry` — asynchronous as of this release, so that
-registering an external plugin never has to eagerly load every other
-registered plugin, only the one actually requested.
+port, `PluginRegistry`, which resolves asynchronously, so that resolving
+an external plugin never has to eagerly load every other registered
+plugin, only the one actually requested.
 
 ## Stack
 
@@ -590,9 +676,8 @@ registered plugin, only the one actually requested.
 - [zod](https://github.com/colinhacks/zod) — validation
 - [handlebars](https://github.com/handlebars-lang/handlebars.js) — file content templating in the scaffold-authoring system
 - [json-logic-js](https://github.com/jwadhams/json-logic-js) — expression evaluation behind the `ExpressionEvaluator` port
-- [picocolors](https://github.com/alexeyraspopov/picocolors) — terminal color (zero deps, chosen over `chalk` after the September 2025 npm supply-chain compromise)
-- TypeScript **6.x** (deliberately not 7's native compiler yet —
-  `typescript-eslint` support isn't there for it as of this writing)
+- [picocolors](https://github.com/alexeyraspopov/picocolors) — terminal color (zero dependencies)
+- TypeScript **6.x**
 
 ## Development
 

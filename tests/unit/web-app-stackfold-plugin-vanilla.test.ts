@@ -98,6 +98,35 @@ describe('web-app-stackfold plugin — appType: "spa-vanilla" (composed blueprin
     ]);
   });
 
+  // Guardrail: the existing file-set test above only checks that
+  // src/setupTests.ts IS in the emitted set — it never checks that
+  // vitest.config.ts's own "setupFiles" array actually references it. This
+  // closes that gap by reading the real emitted vitest.config.ts, parsing
+  // its setupFiles array, and asserting every path it names exists in the
+  // actual emitted file set.
+  it('every path vitest.config.ts lists under "setupFiles" exists in the emitted file set', async () => {
+    const blueprint = await buildBlueprintFor(ANSWERS);
+    const emittedPaths = new Set(blueprint.files.map((f) => f.path));
+
+    const configEntry = blueprint.files.find((f) => f.path === 'vitest.config.ts');
+    if (!configEntry) throw new Error('vitest.config.ts not in blueprint');
+    const configSource = configEntry.content.toString();
+
+    const match = configSource.match(/setupFiles:\s*(\[[^\]]*\])/);
+    if (!match) throw new Error('setupFiles array not found in emitted vitest.config.ts');
+    // The array is a real JS source literal (e.g. ['./src/setupTests.ts']) —
+    // parse it as JSON after normalizing quotes, no eval.
+    const setupFiles: string[] = JSON.parse(match[1]!.replace(/'/g, '"'));
+    expect(setupFiles.length).toBeGreaterThan(0);
+
+    for (const rawPath of setupFiles) {
+      // Normalize against the project root the same way the blueprint's own
+      // paths are rooted: strip a leading "./".
+      const normalized = rawPath.replace(/^\.\//, '');
+      expect(emittedPaths.has(normalized)).toBe(true);
+    }
+  });
+
   it('omits LICENSE when no author is given', async () => {
     const blueprint = await buildBlueprintFor(NO_AUTHOR);
     expect(blueprint.files.map((f) => f.path)).not.toContain('LICENSE');
