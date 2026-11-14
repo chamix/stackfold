@@ -1,0 +1,52 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+/** Structured logger. Every call writes one JSON object; extra fields are merged in. */
+export interface Logger {
+  debug(msg: string, fields?: Record<string, unknown>): void;
+  info(msg: string, fields?: Record<string, unknown>): void;
+  warn(msg: string, fields?: Record<string, unknown>): void;
+  error(msg: string, fields?: Record<string, unknown>): void;
+}
+
+/** Query string values. A key that repeats in the URL becomes an array. */
+export type Query = Record<string, string | string[]>;
+
+export interface Context {
+  req: IncomingMessage;
+  res: ServerResponse;
+  /** Decoded path parameters, e.g. `:id`. */
+  params: Record<string, string>;
+  query: Query;
+  /** Parsed JSON body for POST, PUT and PATCH. `undefined` when the body is empty. */
+  body: unknown;
+  /** Logger bound to this request's `requestId`. */
+  log: Logger;
+  requestId: string;
+}
+
+/** A response with an explicit status and/or headers. Return it from a handler. */
+export class Reply {
+  readonly status: number;
+  readonly body: unknown;
+  readonly headers: Record<string, string>;
+
+  constructor(status: number, body?: unknown, headers: Record<string, string> = {}) {
+    this.status = status;
+    this.body = body;
+    this.headers = headers;
+  }
+}
+
+export function reply(status: number, body?: unknown, headers: Record<string, string> = {}): Reply {
+  return new Reply(status, body, headers);
+}
+
+/**
+ * A handler returns a value, which is sent as JSON with status 200, or a
+ * `reply()` for another status. It may instead write the response itself and
+ * return `undefined`. `undefined` with nothing written is sent as 204.
+ */
+export type Handler = (ctx: Context) => unknown;
+
+/** Runs before routing. Call `next()` to continue; return without calling it to end the request. */
+export type Middleware = (ctx: Context, next: () => Promise<void>) => void | Promise<void>;

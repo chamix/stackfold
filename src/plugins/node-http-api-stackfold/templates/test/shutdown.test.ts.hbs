@@ -1,0 +1,87 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger } from '../src/logger.js';
+import type { Router } from '../src/router.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function startServer(
+  register: (router: Router) => void,
+  overrides: Partial<Config> = {},
+): Promise<{ server: AppServer; base: string }> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1', ...overrides };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level: 'error', sink: () => undefined }),
+    register,
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return { server, base: `http://127.0.0.1:${port}` };
+}
+
+describe('graceful shutdown', () => {
+  it('lets a slow in-flight request finish, then refuses new connections', async () => {
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const { server, base } = await startServer((router) => {
+      router.get('/slow', async () => {
+        markStarted();
+        await sleep(300);
+        return { done: true };
+      });
+    });
+
+    const inFlight = fetch(`${base}/slow`).then((res) => res.json());
+    await started;
+
+    const result = await server.shutdown();
+    expect(await inFlight).toEqual({ done: true });
+    expect(result).toEqual({ forced: false });
+    expect(server.isReady()).toBe(false);
+    await expect(fetch(`${base}/health`)).rejects.toThrow();
+  });
+
+  it('destroys requests still running after SHUTDOWN_TIMEOUT_MS', async () => {
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const { server, base } = await startServer(
+      (router) => {
+        router.get('/hang', () => {
+          markStarted();
+          return new Promise(() => undefined);
+        });
+      },
+      { shutdownTimeoutMs: 100 },
+    );
+
+    const hung = fetch(`${base}/hang`).catch((err: unknown) => err);
+    await started;
+
+    const startedAt = Date.now();
+    const result = await server.shutdown();
+    expect(result).toEqual({ forced: true });
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(await hung).toBeInstanceOf(Error);
+  });
+
+  it('returns the same result when called more than once', async () => {
+    const { server } = await startServer(() => undefined, { shutdownTimeoutMs: 100 });
+    const first = await server.shutdown();
+    const second = await server.shutdown();
+    expect(second).toEqual(first);
+  });
+});

@@ -55,6 +55,18 @@ Run `stackfold list` for the live, authoritative list. Currently:
 - **`web-app-stackfold`** — a web app: a single, dependency-free
   standalone HTML file, or a Vite-powered SPA in React, Vue, or plain
   vanilla TS. One `appType` question selects the variant.
+- **`node-http-api-stackfold`** — a dependency-free Node.js + TypeScript
+  HTTP microservice built on `node:http` only (no runtime dependencies):
+  a request router, JSON body parsing, structured JSON logging, `/health`
+  and `/ready` probes, and graceful shutdown. Questions: `projectName`
+  (default `my-service`), `description` (default `An HTTP microservice`),
+  `port` (default `3000`), and three booleans defaulting to `false` —
+  `cors`, `docker`, and `exampleResource` (a CRUD-style `/api/v1/items`
+  resource). The generated project runs with `npm run dev`, `npm run
+  build`, `npm start`, `npm run typecheck`, and `npm test`. When `docker`
+  is enabled, the generated `Dockerfile` uses `npm ci` if a
+  `package-lock.json` is present and `npm install` otherwise, in both its
+  build and runtime stages.
 - **`plugin-builder`** — stackfold's own self-extension tool: scaffolds a
   brand-new *built-in* plugin (as a TS `scaffold.ts` + synth) and patches
   it straight into stackfold's own plugin registry. Only useful from a
@@ -293,9 +305,10 @@ extension), and optional lifecycle hooks (`preInit`, `postWrite`,
 `mountFragment()`/`composeFragments()`, each namespaced
 Terraform-module-style so two fragments never collide on a question id.
 
-This authoring system is how 4 of the 5 built-in plugins
+This authoring system is how 5 of the 6 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
-`plugin-scaffold`) are built today. `electron-ts` is hand-written instead,
+`plugin-scaffold`, `node-http-api-stackfold`) are built today.
+`electron-ts` is hand-written instead,
 via the `questions()`/`buildBlueprint()` plugin contract directly. Both are
 kept side by side indefinitely — see [Built-in plugins](#built-in-plugins)
 above — and `stackfold` itself is init-only, so neither needs to migrate to
@@ -648,7 +661,8 @@ src/
               compiler (authoring.ts), validation
   plugins/    one folder per built-in stack (electron-ts,
               electron-stackfold, web-app-stackfold, plugin-builder,
-              plugin-scaffold), each implementing the plugin contract
+              plugin-scaffold, node-http-api-stackfold), each implementing
+              the plugin contract
   infra/      adapters: file system, git/process execution (execa),
               prompts (@inquirer), the composite + dynamic plugin
               registries, expression evaluation (json-logic-js)

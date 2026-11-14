@@ -1,0 +1,124 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger, parseLogLevel } from '../src/logger.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+/** Polls until `check` passes. The access log line is written just after the response is flushed. */
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met in time');
+}
+
+function parseLines(lines: string[]): Record<string, unknown>[] {
+  return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+describe('logger', () => {
+  it('writes one JSON object per line with the base fields', () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      service: 'svc',
+      level: 'debug',
+      sink: (line) => lines.push(line),
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
+    });
+
+    logger.info('hello', { a: 1 });
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toEqual({
+      time: '2026-01-02T03:04:05.000Z',
+      level: 'info',
+      msg: 'hello',
+      service: 'svc',
+      a: 1,
+    });
+  });
+
+  it('does not let extra fields overwrite the base fields', () => {
+    const lines: string[] = [];
+    const logger = createLogger({ service: 'svc', sink: (line) => lines.push(line) });
+    logger.info('real', { msg: 'fake', service: 'other', level: 'debug' });
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ msg: 'real', service: 'svc', level: 'info' });
+  });
+
+  it('filters lines below the configured level', () => {
+    const lines: string[] = [];
+    const logger = createLogger({ service: 'svc', level: 'warn', sink: (line) => lines.push(line) });
+    logger.debug('d');
+    logger.info('i');
+    logger.warn('w');
+    logger.error('e');
+    expect(parseLines(lines).map((entry) => entry.level)).toEqual(['warn', 'error']);
+  });
+
+  it('falls back to info for an invalid LOG_LEVEL', () => {
+    expect(parseLogLevel('verbose')).toBe('info');
+    expect(parseLogLevel(undefined)).toBe('info');
+    expect(parseLogLevel(' DEBUG ')).toBe('debug');
+  });
+
+  it('logs one line per request with method, path, status, durationMs and requestId', async () => {
+    const lines: string[] = [];
+    const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+    const server = createServer({
+      config,
+      logger: createLogger({ service: 'svc', level: 'info', sink: (line) => lines.push(line) }),
+    });
+    running.push(server);
+    const { port } = await server.start();
+
+    const res = await fetch(`http://127.0.0.1:${port}/nope`, { headers: { 'x-request-id': 'abc-123' } });
+    expect(res.status).toBe(404);
+
+    await waitFor(() => lines.some((line) => line.includes('"path":"/nope"')));
+    const entries = parseLines(lines).filter((entry) => entry.path === '/nope');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      time: expect.any(String) as unknown,
+      level: 'info',
+      msg: 'request completed',
+      service: 'svc',
+      method: 'GET',
+      path: '/nope',
+      status: 404,
+      requestId: 'abc-123',
+    });
+    expect(typeof entries[0]?.durationMs).toBe('number');
+  });
+
+  it('echoes an incoming x-request-id header', async () => {
+    const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+    const server = createServer({
+      config,
+      logger: createLogger({ service: 'svc', level: 'error', sink: () => undefined }),
+    });
+    running.push(server);
+    const { port } = await server.start();
+
+    const res = await fetch(`http://127.0.0.1:${port}/nope`, { headers: { 'x-request-id': 'abc' } });
+    expect(res.headers.get('x-request-id')).toBe('abc');
+  });
+
+  it('generates a UUID request id when none is sent', async () => {
+    const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+    const server = createServer({
+      config,
+      logger: createLogger({ service: 'svc', level: 'error', sink: () => undefined }),
+    });
+    running.push(server);
+    const { port } = await server.start();
+
+    const res = await fetch(`http://127.0.0.1:${port}/nope`);
+    expect(res.headers.get('x-request-id')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+});

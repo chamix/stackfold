@@ -1,0 +1,87 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger } from '../src/logger.js';
+import type { Router } from '../src/router.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+async function startServer(overrides: Partial<Config> = {}): Promise<string> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1', ...overrides };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level: 'error', sink: () => undefined }),
+    register: (router: Router) => {
+      router.post('/echo', (ctx) => ({ body: ctx.body ?? null, bodyWasUndefined: ctx.body === undefined }));
+    },
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return `http://127.0.0.1:${port}`;
+}
+
+describe('body parsing', () => {
+  it('parses a valid JSON body', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"a":1}',
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ body: { a: 1 }, bodyWasUndefined: false });
+  });
+
+  it('accepts parameters on the content type, such as charset', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+      body: '[1,2]',
+    });
+    expect(await res.json()).toEqual({ body: [1, 2], bodyWasUndefined: false });
+  });
+
+  it('answers 400 invalid_json for a malformed body', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{bad',
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('invalid_json');
+  });
+
+  it('answers 415 for a non-JSON content type', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: 'x',
+    });
+    expect(res.status).toBe(415);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('unsupported_media_type');
+  });
+
+  it('answers 413 for a body over BODY_LIMIT_BYTES', async () => {
+    const base = await startServer({ bodyLimitBytes: 16 });
+    const res = await fetch(`${base}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: 'x'.repeat(64) }),
+    });
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('payload_too_large');
+  });
+
+  it('yields undefined for an empty body', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/echo`, { method: 'POST' });
+    expect(await res.json()).toEqual({ body: null, bodyWasUndefined: true });
+  });
+});

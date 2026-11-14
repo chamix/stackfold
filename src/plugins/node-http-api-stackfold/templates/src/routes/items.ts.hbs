@@ -1,0 +1,59 @@
+import { HttpError } from '../errors.js';
+import type { Router } from '../router.js';
+import { reply } from '../types.js';
+import { ItemStore } from './items-store.js';
+
+const BASE_PATH = '/api/v1/items';
+const MAX_NAME_LENGTH = 100;
+
+function validationError(message: string): HttpError {
+  return new HttpError(400, 'validation_error', message);
+}
+
+function notFound(): HttpError {
+  return new HttpError(404, 'not_found', 'Item not found');
+}
+
+/** Checks a body of the form {"name": "..."} and returns the trimmed name. */
+function parseName(body: unknown): string {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw validationError('Request body must be a JSON object with a "name" field');
+  }
+  const name: unknown = (body as Record<string, unknown>).name;
+  if (typeof name !== 'string') throw validationError('"name" must be a string');
+  const trimmed = name.trim();
+  if (trimmed.length === 0) throw validationError('"name" must not be empty');
+  if (trimmed.length > MAX_NAME_LENGTH) {
+    throw validationError(`"name" must be at most ${MAX_NAME_LENGTH} characters`);
+  }
+  return trimmed;
+}
+
+/** Registers the example resource at /api/v1/items. */
+export function registerItemRoutes(router: Router, store: ItemStore = new ItemStore()): void {
+  router.get(BASE_PATH, () => ({ items: store.list() }));
+
+  router.post(BASE_PATH, (ctx) => {
+    const item = store.create(parseName(ctx.body));
+    return reply(201, item, { location: `${BASE_PATH}/${item.id}` });
+  });
+
+  router.get(`${BASE_PATH}/:id`, (ctx) => {
+    const item = store.get(ctx.params.id);
+    if (item === undefined) throw notFound();
+    return item;
+  });
+
+  router.put(`${BASE_PATH}/:id`, (ctx) => {
+    const id = ctx.params.id;
+    if (store.get(id) === undefined) throw notFound();
+    const updated = store.rename(id, parseName(ctx.body));
+    if (updated === undefined) throw notFound();
+    return updated;
+  });
+
+  router.delete(`${BASE_PATH}/:id`, (ctx) => {
+    if (!store.delete(ctx.params.id)) throw notFound();
+    return reply(204);
+  });
+}

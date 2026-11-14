@@ -1,0 +1,97 @@
+import { once } from 'node:events';
+import net from 'node:net';
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger, type LogLevel } from '../src/logger.js';
+import type { Router } from '../src/router.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+async function startServer(
+  level: LogLevel,
+  lines: string[],
+  register?: (router: Router) => void,
+): Promise<{ server: AppServer; port: number }> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level, sink: (line) => lines.push(line) }),
+    register,
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return { server, port };
+}
+
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met in time');
+}
+
+describe('health and readiness', () => {
+  it('GET /health returns 200 with status ok', async () => {
+    const { port } = await startServer('error', []);
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('GET /ready returns 200 with status ready while listening', async () => {
+    const { server, port } = await startServer('error', []);
+    const res = await fetch(`http://127.0.0.1:${port}/ready`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ready' });
+    expect(server.isReady()).toBe(true);
+  });
+
+  it('logs health requests at debug level only', async () => {
+    const lines: string[] = [];
+    const { port } = await startServer('info', lines);
+    await fetch(`http://127.0.0.1:${port}/health`);
+    await fetch(`http://127.0.0.1:${port}/nope`);
+    await waitFor(() => lines.some((line) => line.includes('"path":"/nope"')));
+    expect(lines.some((line) => line.includes('"path":"/health"'))).toBe(false);
+
+    const debugLines: string[] = [];
+    const debug = await startServer('debug', debugLines);
+    await fetch(`http://127.0.0.1:${debug.port}/health`);
+    await waitFor(() => debugLines.some((line) => line.includes('"path":"/health"')));
+    expect(debugLines.find((line) => line.includes('"path":"/health"'))).toContain('"level":"debug"');
+  });
+
+  it('GET /ready returns 503 once shutdown has begun', async () => {
+    const { server, port } = await startServer('error', []);
+
+    // New TCP connections are refused once shutdown closes the listener, and
+    // idle keep-alive sockets are closed. A socket with a request still being
+    // received is neither, so it can carry /ready across the shutdown boundary.
+    const socket = net.connect(port, '127.0.0.1');
+    socket.setEncoding('utf8');
+    let received = '';
+    socket.on('data', (chunk: string) => {
+      received += chunk;
+    });
+    const closed = once(socket, 'close');
+    await once(socket, 'connect');
+    socket.write('GET /ready HTTP/1.1\r\nHost: test\r\n');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const stopping = server.shutdown();
+    expect(server.isReady()).toBe(false);
+    socket.write('\r\n');
+
+    await closed;
+    expect(received).toContain('HTTP/1.1 503');
+    expect(received).toContain('{"status":"not_ready"}');
+    expect(received).toContain('connection: close');
+    expect(await stopping).toEqual({ forced: false });
+  });
+});

@@ -1,0 +1,81 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger } from '../src/logger.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+async function startServer(overrides: Partial<Config> = {}): Promise<string> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1', ...overrides };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level: 'error', sink: () => undefined }),
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return `http://127.0.0.1:${port}`;
+}
+
+describe('cors', () => {
+  it('adds Access-Control-Allow-Origin to simple requests', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/health`, { headers: { origin: 'http://a.test' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('vary')).toBeNull();
+  });
+
+  it('answers a preflight with 204 for any path, echoing the requested headers', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/anything`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://a.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'x-custom-header',
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-methods')).toBe('GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    expect(res.headers.get('access-control-allow-headers')).toBe('x-custom-header');
+    expect(res.headers.get('access-control-max-age')).toBe('600');
+  });
+
+  it('falls back to the default allowed headers when none are requested', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/anything`, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://a.test', 'access-control-request-method': 'PUT' },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-headers')).toBe('content-type,x-request-id');
+  });
+
+  it('sends a specific origin and Vary: Origin', async () => {
+    const base = await startServer({ corsOrigin: 'http://a.test' });
+
+    const simple = await fetch(`${base}/health`, { headers: { origin: 'http://a.test' } });
+    expect(simple.headers.get('access-control-allow-origin')).toBe('http://a.test');
+    expect(simple.headers.get('vary')).toBe('Origin');
+
+    const preflight = await fetch(`${base}/anything`, {
+      method: 'OPTIONS',
+      headers: { origin: 'http://a.test', 'access-control-request-method': 'POST' },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('http://a.test');
+    expect(preflight.headers.get('vary')).toBe('Origin');
+  });
+
+  it('routes an OPTIONS request that is not a preflight normally', async () => {
+    const base = await startServer();
+    const res = await fetch(`${base}/health`, { method: 'OPTIONS' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET');
+  });
+});

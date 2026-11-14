@@ -1,0 +1,34 @@
+import type { Middleware } from '../types.js';
+
+const ALLOWED_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
+const DEFAULT_ALLOWED_HEADERS = 'content-type,x-request-id';
+const MAX_AGE_SECONDS = '600';
+
+/**
+ * CORS headers on every response. `origin` is CORS_ORIGIN: `*` or one specific
+ * origin. Preflight requests (OPTIONS with Access-Control-Request-Method) are
+ * answered here, before routing, so they work for any path.
+ */
+export function createCorsMiddleware(origin: string): Middleware {
+  const specificOrigin = origin !== '*';
+
+  return (ctx, next) => {
+    const { req, res } = ctx;
+    res.setHeader('access-control-allow-origin', origin);
+    if (specificOrigin) res.setHeader('vary', 'Origin');
+
+    const isPreflight = req.method === 'OPTIONS' && req.headers['access-control-request-method'] !== undefined;
+    if (!isPreflight) return next();
+
+    const requested = req.headers['access-control-request-headers'];
+    res.setHeader('access-control-allow-methods', ALLOWED_METHODS);
+    res.setHeader(
+      'access-control-allow-headers',
+      typeof requested === 'string' && requested.length > 0 ? requested : DEFAULT_ALLOWED_HEADERS,
+    );
+    res.setHeader('access-control-max-age', MAX_AGE_SECONDS);
+    res.statusCode = 204;
+    res.end();
+    return undefined;
+  };
+}

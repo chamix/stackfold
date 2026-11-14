@@ -1,0 +1,49 @@
+import { parseLogLevel, type LogLevel } from './logger.js';
+
+export const SERVICE_NAME = '{{{projectName}}}';
+
+const DEFAULT_PORT = {{{port}}};
+const DEFAULT_HOST = '0.0.0.0';
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
+const DEFAULT_BODY_LIMIT_BYTES = 1048576;
+
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
+export interface Config {
+  port: number;
+  host: string;
+  logLevel: LogLevel;
+  shutdownTimeoutMs: number;
+  bodyLimitBytes: number;
+{{#if cors}}
+  corsOrigin: string;
+{{/if}}
+}
+
+function readInteger(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number, max: number): number {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw new ConfigError(`${name} must be an integer, got "${raw}"`);
+  const value = Number(raw);
+  if (value < min || value > max) throw new ConfigError(`${name} must be between ${min} and ${max}, got ${raw}`);
+  return value;
+}
+
+/** Reads configuration from environment variables. Throws ConfigError on an invalid numeric value. */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  return {
+    port: readInteger(env, 'PORT', DEFAULT_PORT, 1, 65535),
+    host: env.HOST?.trim() || DEFAULT_HOST,
+    logLevel: parseLogLevel(env.LOG_LEVEL),
+    shutdownTimeoutMs: readInteger(env, 'SHUTDOWN_TIMEOUT_MS', DEFAULT_SHUTDOWN_TIMEOUT_MS, 0, 3600000),
+    bodyLimitBytes: readInteger(env, 'BODY_LIMIT_BYTES', DEFAULT_BODY_LIMIT_BYTES, 1, 1073741824),
+{{#if cors}}
+    corsOrigin: env.CORS_ORIGIN?.trim() || '*',
+{{/if}}
+  };
+}
