@@ -100,6 +100,32 @@ export default defineConfig({
         statements: 80,
         functions: 80,
         branches: 75,
+        /**
+         * TEST-001: the global gate above averages over ~100 files, so one adapter at
+         * 0-14% never moved it (FIX-002 shipped through exactly that hole). `src/infra/**`
+         * is the only code that talks to real libraries and the OS, and unit tests stub
+         * those adapters, so it gets its own gate: an aggregate floor for the directory,
+         * plus a per-file floor so no single adapter can sit near zero behind a healthy
+         * average. Vitest still applies the global thresholds to these files too; a glob
+         * entry only adds checks. Measured 2026-11-14 (Linux, full suite): aggregate
+         * 84.4 stmts / 80.0 branch / 83.9 funcs / 86.8 lines, weakest file `fs.ts` at
+         * 70.6-73.4. Floors sit a few points below that on purpose: this is a signal that
+         * catches a regression, not a target to climb, and coverage is not correctness.
+         * A glob that matches no file never fails, so renaming this directory would
+         * silently disable the gate: keep the glob in step with it.
+         */
+        'src/infra/**': {
+          lines: 80,
+          statements: 80,
+          functions: 78,
+          branches: 72,
+          perFile: {
+            lines: 65,
+            statements: 65,
+            functions: 65,
+            branches: 65,
+          },
+        },
       },
     },
   },
