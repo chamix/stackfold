@@ -1,0 +1,100 @@
+# {{{projectName}}}
+
+{{{description}}}
+
+The service uses only the built-in `node:http` module. It has no runtime dependencies.
+
+## Requirements
+
+- Node.js 20 or newer
+- npm
+
+## Install
+
+```sh
+npm install
+```
+
+## Commands
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Run from source, reloading on change |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm start` | Run the compiled server (`node dist/index.js`) |
+| `npm run typecheck` | Type-check `src` and `test` without emitting |
+| `npm test` | Run the test suite with vitest |
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `{{{port}}}` | HTTP port to listen on (1-65535) |
+| `HOST` | `0.0.0.0` | Address to bind |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; any other value falls back to `info` |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | How long in-flight requests may run on shutdown before their connections are destroyed |
+| `BODY_LIMIT_BYTES` | `1048576` | Maximum request body size in bytes |
+{{#if cors}}
+| `CORS_ORIGIN` | `*` | Value of `Access-Control-Allow-Origin`: `*` or one origin such as `https://app.example.com` |
+{{/if}}
+
+A non-numeric or out-of-range numeric value stops the server at startup with a logged error and exit code 1.
+
+## Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness: `200 {"status":"ok"}` while the process can respond |
+| `GET` | `/ready` | Readiness: `200 {"status":"ready"}` while listening; `503 {"status":"not_ready"}` before listening and once shutdown has started |
+{{#if exampleResource}}
+| `GET` | `/api/v1/items` | List items: `200 {"items":[...]}` |
+| `POST` | `/api/v1/items` | Create an item from `{"name": "..."}` (1 to 100 characters): `201`, with a `Location` header |
+| `GET` | `/api/v1/items/:id` | Get one item: `200`, or `404` |
+| `PUT` | `/api/v1/items/:id` | Rename an item from `{"name": "..."}`: `200`, `400` or `404` |
+| `DELETE` | `/api/v1/items/:id` | Delete an item: `204`, or `404` |
+
+The item store is in memory and local to the process. It starts empty and is lost on restart.
+{{/if}}
+
+Errors are JSON, for example `{"error":{"code":"not_found","message":"No route matches /nope"}}`.
+
+## Logging
+
+Each log line is one JSON object on stdout. Every request logs one line when it completes. Requests to `/health` and `/ready` log at `debug` level.
+
+```json
+{"time":"2026-01-02T03:04:05.678Z","level":"info","msg":"request completed","service":"{{{projectName}}}","method":"GET","path":"/nope","status":404,"durationMs":0.42,"requestId":"6f1c2b7e-0d7a-4a7e-9f0e-2b1d3c4e5f60"}
+```
+
+An incoming `x-request-id` header is kept and echoed in the response. Otherwise a UUID is generated.
+
+## Graceful shutdown
+
+On `SIGTERM` or `SIGINT` the server:
+
+1. marks itself not ready, so `/ready` returns 503;
+2. stops accepting connections and closes idle keep-alive connections;
+3. waits for in-flight requests to finish, for up to `SHUTDOWN_TIMEOUT_MS`;
+4. exits with code 0. If the timeout was reached, it destroys the remaining connections and exits with code 1.
+
+Later signals during shutdown are ignored. Responses sent during shutdown include `Connection: close`.
+{{#if cors}}
+
+## CORS
+
+Every response carries `Access-Control-Allow-Origin` set to `CORS_ORIGIN`. When that is a specific origin, `Vary: Origin` is also set.
+
+`OPTIONS` requests with an `Access-Control-Request-Method` header are preflight requests. They get `204` before routing, for any path, with `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` (echoing the requested headers, or `content-type,x-request-id`) and `Access-Control-Max-Age: 600`.
+{{/if}}
+{{#if docker}}
+
+## Docker
+
+```sh
+docker build -t {{{projectName}}} .
+docker run --rm -p {{{port}}}:{{{port}}} {{{projectName}}}
+curl -i localhost:{{{port}}}/health
+```
+
+The image runs as the non-root `node` user and listens on port {{{port}}}.
+{{/if}}

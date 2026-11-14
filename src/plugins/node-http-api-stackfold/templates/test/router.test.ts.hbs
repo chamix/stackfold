@@ -1,0 +1,104 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger } from '../src/logger.js';
+import type { Router } from '../src/router.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+async function startServer(register: (router: Router) => void): Promise<string> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level: 'error', sink: () => undefined }),
+    register,
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return `http://127.0.0.1:${port}`;
+}
+
+const register = (router: Router): void => {
+  router.get('/static', () => ({ route: 'static' }));
+  router.post('/static', () => ({ route: 'static-post' }));
+  router.get('/users/:id', (ctx) => ({ id: ctx.params.id }));
+  router.get('/a/:x/b/:y', (ctx) => ({ x: ctx.params.x, y: ctx.params.y }));
+  router.get('/p/static', () => ({ route: 'literal' }));
+  router.get('/p/:id', (ctx) => ({ route: 'param', id: ctx.params.id }));
+  router.get('/q', (ctx) => ({ query: ctx.query }));
+};
+
+describe('router', () => {
+  it('matches a static path', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/static`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ route: 'static' });
+  });
+
+  it('extracts a :id parameter', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/users/42`);
+    expect(await res.json()).toEqual({ id: '42' });
+  });
+
+  it('URL-decodes parameter values', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/users/a%20b%2Fc`);
+    expect(await res.json()).toEqual({ id: 'a b/c' });
+  });
+
+  it('extracts multiple parameters', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/a/1/b/2`);
+    expect(await res.json()).toEqual({ x: '1', y: '2' });
+  });
+
+  it('ignores a trailing slash', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/static/`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ route: 'static' });
+  });
+
+  it('prefers a static segment over a parameter segment', async () => {
+    const base = await startServer(register);
+    expect(await (await fetch(`${base}/p/static`)).json()).toEqual({ route: 'literal' });
+    expect(await (await fetch(`${base}/p/other`)).json()).toEqual({ route: 'param', id: 'other' });
+  });
+
+  it('returns a JSON 404 for an unknown path', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/nope`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('not_found');
+    expect(typeof body.error.message).toBe('string');
+  });
+
+  it('returns 405 with an Allow header for a known path with another method', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/static`, { method: 'DELETE' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET, POST');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('method_not_allowed');
+  });
+
+  it('parses the query string, with repeated keys as arrays', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/q?a=1&b=2&b=3&c=`);
+    expect(await res.json()).toEqual({ query: { a: '1', b: ['2', '3'], c: '' } });
+  });
+
+  it('answers 400 for malformed percent-encoding in a parameter', async () => {
+    const base = await startServer(register);
+    const res = await fetch(`${base}/users/%E0%A4%A`);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('bad_request');
+  });
+});

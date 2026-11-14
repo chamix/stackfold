@@ -61,6 +61,14 @@ const staticRegistry = new StaticPluginRegistry([
   // closures (function values JSON cannot carry), so a JSON-compiled
   // runtime path would silently drop them.
   compileScaffold((await import('../plugins/web-app-stackfold/scaffold.js')).default, expressionEvaluator),
+  // node-http-api-stackfold — none of its questions carry a
+  // `validate` closure (declarative `constraints` instead), so it
+  // compiles from its own synthesized `scaffold.json`, like `electron-stackfold`.
+  compileScaffold(
+    (await import('../plugins/node-http-api-stackfold/scaffold.json', { with: { type: 'json' } }))
+      .default as ScaffoldDefinition,
+    expressionEvaluator
+  ),
   // stackfold-plugin-registry:end
 ]);
 

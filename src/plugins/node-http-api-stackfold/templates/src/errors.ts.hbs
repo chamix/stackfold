@@ -1,0 +1,40 @@
+/** An error with an HTTP status, a machine-readable code and a message that is safe to send to clients. */
+export class HttpError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly headers: Record<string, string>;
+
+  constructor(status: number, code: string, message: string, headers: Record<string, string> = {}) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+    this.code = code;
+    this.headers = headers;
+  }
+}
+
+export interface ErrorResponse {
+  status: number;
+  body: { error: { code: string; message: string } };
+  headers: Record<string, string>;
+  /** True for errors that are not HttpError. They are logged, and the client gets no details. */
+  unexpected: boolean;
+}
+
+/** Maps any thrown value to the JSON error response sent to the client. */
+export function toErrorResponse(err: unknown): ErrorResponse {
+  if (err instanceof HttpError) {
+    return {
+      status: err.status,
+      body: { error: { code: err.code, message: err.message } },
+      headers: err.headers,
+      unexpected: false,
+    };
+  }
+  return {
+    status: 500,
+    body: { error: { code: 'internal_error', message: 'Internal server error' } },
+    headers: {},
+    unexpected: true,
+  };
+}

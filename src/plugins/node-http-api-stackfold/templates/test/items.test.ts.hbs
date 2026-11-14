@@ -1,0 +1,124 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { loadConfig, type Config } from '../src/config.js';
+import { createLogger } from '../src/logger.js';
+import { createServer, type AppServer } from '../src/server.js';
+
+interface Item {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+const running: AppServer[] = [];
+
+afterEach(async () => {
+  await Promise.all(running.splice(0).map((server) => server.shutdown()));
+});
+
+async function startServer(): Promise<string> {
+  const config: Config = { ...loadConfig({}), port: 0, host: '127.0.0.1' };
+  const server = createServer({
+    config,
+    logger: createLogger({ service: 'test', level: 'error', sink: () => undefined }),
+  });
+  running.push(server);
+  const { port } = await server.start();
+  return `http://127.0.0.1:${port}/api/v1/items`;
+}
+
+function json(method: string, body: unknown): RequestInit {
+  return {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+}
+
+async function errorCode(res: Response): Promise<string> {
+  return ((await res.json()) as { error: { code: string } }).error.code;
+}
+
+describe('example items resource', () => {
+  it('GET lists items, starting empty', async () => {
+    const base = await startServer();
+    const res = await fetch(base);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [] });
+  });
+
+  it('POST creates an item with a Location header', async () => {
+    const base = await startServer();
+    const res = await fetch(base, json('POST', { name: 'first' }));
+    expect(res.status).toBe(201);
+    const item = (await res.json()) as Item;
+    expect(item).toMatchObject({ name: 'first' });
+    expect(item.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Date(item.createdAt).toString()).not.toBe('Invalid Date');
+    expect(res.headers.get('location')).toBe(`/api/v1/items/${item.id}`);
+  });
+
+  it('POST rejects an invalid body with 400 validation_error', async () => {
+    const base = await startServer();
+    const missing = await fetch(base, json('POST', {}));
+    expect(missing.status).toBe(400);
+    expect(await errorCode(missing)).toBe('validation_error');
+
+    const blank = await fetch(base, json('POST', { name: '   ' }));
+    expect(blank.status).toBe(400);
+
+    const tooLong = await fetch(base, json('POST', { name: 'x'.repeat(101) }));
+    expect(tooLong.status).toBe(400);
+
+    const notString = await fetch(base, json('POST', { name: 42 }));
+    expect(notString.status).toBe(400);
+  });
+
+  it('POST rejects a non-JSON content type with 415', async () => {
+    const base = await startServer();
+    const res = await fetch(base, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'name=x' });
+    expect(res.status).toBe(415);
+  });
+
+  it('GET by id returns the item, or 404 when unknown', async () => {
+    const base = await startServer();
+    const created = (await (await fetch(base, json('POST', { name: 'lookup' }))).json()) as Item;
+
+    const found = await fetch(`${base}/${created.id}`);
+    expect(found.status).toBe(200);
+    expect(await found.json()).toEqual(created);
+
+    const missing = await fetch(`${base}/00000000-0000-0000-0000-000000000000`);
+    expect(missing.status).toBe(404);
+    expect(await errorCode(missing)).toBe('not_found');
+  });
+
+  it('PUT renames an item, and answers 400 or 404 on bad input', async () => {
+    const base = await startServer();
+    const created = (await (await fetch(base, json('POST', { name: 'old' }))).json()) as Item;
+
+    const updated = await fetch(`${base}/${created.id}`, json('PUT', { name: 'new' }));
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ ...created, name: 'new' });
+
+    const invalid = await fetch(`${base}/${created.id}`, json('PUT', { name: '' }));
+    expect(invalid.status).toBe(400);
+
+    const unknown = await fetch(`${base}/00000000-0000-0000-0000-000000000000`, json('PUT', { name: 'x' }));
+    expect(unknown.status).toBe(404);
+  });
+
+  it('DELETE removes an item with 204, then 404', async () => {
+    const base = await startServer();
+    const created = (await (await fetch(base, json('POST', { name: 'gone' }))).json()) as Item;
+
+    const deleted = await fetch(`${base}/${created.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(204);
+    expect(await deleted.text()).toBe('');
+
+    const again = await fetch(`${base}/${created.id}`, { method: 'DELETE' });
+    expect(again.status).toBe(404);
+
+    const afterDelete = await fetch(`${base}/${created.id}`);
+    expect(afterDelete.status).toBe(404);
+  });
+});

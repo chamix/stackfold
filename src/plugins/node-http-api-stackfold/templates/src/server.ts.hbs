@@ -1,0 +1,254 @@
+import { randomUUID } from 'node:crypto';
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { readJsonBody } from './body.js';
+import type { Config } from './config.js';
+import { HttpError, toErrorResponse } from './errors.js';
+import { withFields } from './logger.js';
+import { parseQuery, Router } from './router.js';
+import { registerHealthRoutes } from './routes/health.js';
+{{#if exampleResource}}
+import { registerItemRoutes } from './routes/items.js';
+{{/if}}
+{{#if cors}}
+import { createCorsMiddleware } from './middleware/cors.js';
+{{/if}}
+import { Reply, type Context, type Logger, type Middleware } from './types.js';
+
+export interface ServerOptions {
+  config: Config;
+  logger: Logger;
+  /** Adds routes after the built-in ones. Used by tests and by code that embeds the server. */
+  register?: (router: Router) => void;
+}
+
+export interface StartResult {
+  host: string;
+  port: number;
+}
+
+export interface ShutdownResult {
+  /** True when requests were still running at the timeout and their connections were destroyed. */
+  forced: boolean;
+}
+
+export interface AppServer {
+  /** Listens on config.host and config.port. Port 0 picks a free port. */
+  start(): Promise<StartResult>;
+  /** Stops accepting connections and drains in-flight requests. Safe to call more than once. */
+  shutdown(): Promise<ShutdownResult>;
+  /** True while listening and not shutting down. */
+  isReady(): boolean;
+}
+
+type State = 'idle' | 'listening' | 'stopping' | 'stopped';
+
+const REQUEST_ID_PATTERN = /^[\x21-\x7e]{1,200}$/;
+
+function requestIdFrom(header: string | string[] | undefined): string {
+  if (typeof header === 'string' && REQUEST_ID_PATTERN.test(header)) return header;
+  return randomUUID();
+}
+
+function isQuietPath(pathname: string): boolean {
+  return pathname === '/health' || pathname === '/ready';
+}
+
+function writeJson(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+function sendResult(res: ServerResponse, result: unknown): void {
+  if (res.headersSent || res.writableEnded) return; // the handler wrote the response itself
+  if (result === undefined) {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+  if (result instanceof Reply) {
+    for (const [name, value] of Object.entries(result.headers)) res.setHeader(name, value);
+    if (result.body === undefined) {
+      res.statusCode = result.status;
+      res.end();
+      return;
+    }
+    writeJson(res, result.status, result.body);
+    return;
+  }
+  writeJson(res, 200, result);
+}
+
+function sendError(ctx: Context, err: unknown): void {
+  const { res } = ctx;
+  const response = toErrorResponse(err);
+  if (response.unexpected) {
+    ctx.log.error('unhandled error', {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+  }
+  if (res.headersSent) {
+    res.destroy(); // a JSON error cannot be sent once headers are out
+    return;
+  }
+  for (const [name, value] of Object.entries(response.headers)) res.setHeader(name, value);
+  writeJson(res, response.status, response.body);
+}
+
+export function createServer(options: ServerOptions): AppServer {
+  const { config, logger } = options;
+  let state: State = 'idle';
+  let shutdownResult: Promise<ShutdownResult> | undefined;
+
+  const router = new Router();
+  registerHealthRoutes(router, () => state === 'listening');
+{{#if exampleResource}}
+  registerItemRoutes(router);
+{{/if}}
+  options.register?.(router);
+
+  const middlewares: Middleware[] = [];
+{{#if cors}}
+  middlewares.push(createCorsMiddleware(config.corsOrigin));
+{{/if}}
+
+  /** Once shutdown has started, every response closes its connection so keep-alive sockets drain. */
+  function closeAfterResponse(res: ServerResponse): void {
+    if (state !== 'listening') res.setHeader('connection', 'close');
+  }
+
+  async function runMiddlewares(ctx: Context, index: number, last: () => Promise<void>): Promise<void> {
+    const middleware = middlewares[index];
+    if (middleware === undefined) {
+      await last();
+      return;
+    }
+    await middleware(ctx, () => runMiddlewares(ctx, index + 1, last));
+  }
+
+  async function dispatch(ctx: Context, pathname: string): Promise<void> {
+    const method = (ctx.req.method ?? 'GET').toUpperCase();
+    const resolution = router.resolve(method, pathname);
+    if (resolution.kind === 'not-found') {
+      throw new HttpError(404, 'not_found', `No route matches ${pathname}`);
+    }
+    if (resolution.kind === 'method-not-allowed') {
+      throw new HttpError(405, 'method_not_allowed', `${method} is not allowed on ${pathname}`, {
+        allow: resolution.allow.join(', '),
+      });
+    }
+
+    ctx.params = resolution.params;
+    if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+      ctx.body = await readJsonBody(ctx.req, config.bodyLimitBytes);
+    }
+    const result = await resolution.handler(ctx);
+    // Checked after the handler runs: a request that finishes during shutdown must not keep its socket alive.
+    closeAfterResponse(ctx.res);
+    sendResult(ctx.res, result);
+  }
+
+  async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startedAt = process.hrtime.bigint();
+    const requestId = requestIdFrom(req.headers['x-request-id']);
+    const method = (req.method ?? 'GET').toUpperCase();
+    // The prefix keeps `//path` from being parsed as a host name.
+    const url = new URL(req.url?.startsWith('/') ? `http://localhost${req.url}` : 'http://localhost/');
+
+    res.setHeader('x-request-id', requestId);
+    closeAfterResponse(res);
+    res.once('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const fields = {
+        method,
+        path: url.pathname,
+        status: res.statusCode,
+        durationMs: Math.round(durationMs * 1000) / 1000,
+        requestId,
+      };
+      if (isQuietPath(url.pathname)) logger.debug('request completed', fields);
+      else logger.info('request completed', fields);
+    });
+
+    const ctx: Context = {
+      req,
+      res,
+      params: Object.create(null) as Record<string, string>,
+      query: parseQuery(url.searchParams),
+      body: undefined,
+      log: withFields(logger, { requestId }),
+      requestId,
+    };
+    try {
+      await runMiddlewares(ctx, 0, () => dispatch(ctx, url.pathname));
+    } catch (err) {
+      closeAfterResponse(res);
+      sendError(ctx, err);
+    }
+  }
+
+  const server: Server = createHttpServer((req, res) => {
+    handleRequest(req, res).catch((err: unknown) => {
+      logger.error('request handling failed', { error: err instanceof Error ? err.message : String(err) });
+      res.destroy();
+    });
+  });
+
+  function start(): Promise<StartResult> {
+    if (state !== 'idle') return Promise.reject(new Error(`Cannot start a server that is ${state}`));
+    return new Promise<StartResult>((resolve, reject) => {
+      const onError = (err: Error): void => reject(err);
+      server.once('error', onError);
+      server.listen(config.port, config.host, () => {
+        server.off('error', onError);
+        state = 'listening';
+        const address = server.address();
+        const port = typeof address === 'object' && address !== null ? address.port : config.port;
+        logger.info('server listening', { host: config.host, port });
+        resolve({ host: config.host, port });
+      });
+    });
+  }
+
+  async function drain(): Promise<ShutdownResult> {
+    const closed = new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    server.closeIdleConnections();
+
+    let forced = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        forced = true;
+        logger.warn('shutdown timeout reached, destroying remaining connections', {
+          timeoutMs: config.shutdownTimeoutMs,
+        });
+        server.closeAllConnections();
+        resolve();
+      }, config.shutdownTimeoutMs);
+    });
+
+    await Promise.race([closed, deadline]);
+    clearTimeout(timer);
+    await closed;
+    state = 'stopped';
+    logger.info('shutdown complete', { forced });
+    return { forced };
+  }
+
+  function shutdown(): Promise<ShutdownResult> {
+    if (shutdownResult === undefined) {
+      state = 'stopping';
+      logger.info('shutdown started', { timeoutMs: config.shutdownTimeoutMs });
+      shutdownResult = drain();
+    }
+    return shutdownResult;
+  }
+
+  return { start, shutdown, isReady: () => state === 'listening' };
+}

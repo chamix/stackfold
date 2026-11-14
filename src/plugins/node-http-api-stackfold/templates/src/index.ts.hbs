@@ -1,0 +1,55 @@
+import { ConfigError, loadConfig, SERVICE_NAME, type Config } from './config.js';
+import { createLogger } from './logger.js';
+import { createServer } from './server.js';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function loadOrReport(): Config | undefined {
+  try {
+    return loadConfig(process.env);
+  } catch (err) {
+    const message = err instanceof ConfigError ? err.message : errorMessage(err);
+    createLogger({ service: SERVICE_NAME, level: 'info' }).error('invalid configuration', { error: message });
+    return undefined;
+  }
+}
+
+async function main(): Promise<void> {
+  const config = loadOrReport();
+  if (config === undefined) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const logger = createLogger({ service: SERVICE_NAME, level: config.logLevel });
+  const server = createServer({ config, logger });
+
+  try {
+    await server.start();
+  } catch (err) {
+    logger.error('failed to start server', { error: errorMessage(err) });
+    process.exitCode = 1;
+    return;
+  }
+
+  let stopping: Promise<void> | undefined;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (stopping !== undefined) {
+      logger.debug('signal ignored, shutdown already in progress', { signal });
+      return;
+    }
+    logger.info('signal received', { signal });
+    stopping = server.shutdown().then(({ forced }) => {
+      if (forced) process.exitCode = 1;
+    });
+  };
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
+}
+
+main().catch((err: unknown) => {
+  createLogger({ service: SERVICE_NAME, level: 'error' }).error('fatal', { error: errorMessage(err) });
+  process.exitCode = 1;
+});

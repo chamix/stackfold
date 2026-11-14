@@ -1,0 +1,39 @@
+import { randomUUID } from 'node:crypto';
+
+export interface Item {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+/** In-memory, process-local store. It starts empty. */
+export class ItemStore {
+  readonly #items = new Map<string, Item>();
+
+  list(): Item[] {
+    return [...this.#items.values()];
+  }
+
+  get(id: string): Item | undefined {
+    return this.#items.get(id);
+  }
+
+  create(name: string): Item {
+    const item: Item = { id: randomUUID(), name, createdAt: new Date().toISOString() };
+    this.#items.set(item.id, item);
+    return item;
+  }
+
+  /** Renames an item. Returns undefined when the id is unknown. */
+  rename(id: string, name: string): Item | undefined {
+    const current = this.#items.get(id);
+    if (current === undefined) return undefined;
+    const updated: Item = { ...current, name };
+    this.#items.set(id, updated);
+    return updated;
+  }
+
+  delete(id: string): boolean {
+    return this.#items.delete(id);
+  }
+}

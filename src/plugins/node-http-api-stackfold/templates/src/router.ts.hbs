@@ -1,0 +1,124 @@
+import { HttpError } from './errors.js';
+import type { Handler, Query } from './types.js';
+
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+type Segment = { kind: 'static'; value: string } | { kind: 'param'; name: string };
+
+interface Route {
+  method: Method;
+  pattern: string;
+  segments: Segment[];
+  handler: Handler;
+}
+
+export type Resolution =
+  | { kind: 'found'; handler: Handler; params: Record<string, string> }
+  | { kind: 'method-not-allowed'; allow: Method[] }
+  | { kind: 'not-found' };
+
+/** Splits a path on `/`. Empty segments are dropped, so a trailing slash is ignored. */
+function splitPath(path: string): string[] {
+  return path.split('/').filter((part) => part.length > 0);
+}
+
+function parsePattern(pattern: string): Segment[] {
+  if (!pattern.startsWith('/')) throw new Error(`Route pattern must start with "/": ${pattern}`);
+  return splitPath(pattern).map((part): Segment => {
+    if (!part.startsWith(':')) return { kind: 'static', value: part };
+    const name = part.slice(1);
+    if (name.length === 0) throw new Error(`Route pattern "${pattern}" has an unnamed parameter`);
+    return { kind: 'param', name };
+  });
+}
+
+/** Orders routes most specific first: a static segment beats a parameter segment at the same position. */
+function compareSpecificity(a: Route, b: Route): number {
+  for (let i = 0; i < a.segments.length; i += 1) {
+    const left = a.segments[i]?.kind === 'static' ? 0 : 1;
+    const right = b.segments[i]?.kind === 'static' ? 0 : 1;
+    if (left !== right) return left - right;
+  }
+  return 0;
+}
+
+function matchesShape(segments: Segment[], parts: string[]): boolean {
+  if (segments.length !== parts.length) return false;
+  return segments.every((segment, i) => segment.kind === 'param' || segment.value === parts[i]);
+}
+
+function decodeSegment(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new HttpError(400, 'bad_request', 'Malformed percent-encoding in path');
+  }
+}
+
+function extractParams(segments: Segment[], parts: string[]): Record<string, string> {
+  const params = Object.create(null) as Record<string, string>;
+  segments.forEach((segment, i) => {
+    if (segment.kind === 'param') params[segment.name] = decodeSegment(parts[i] ?? '');
+  });
+  return params;
+}
+
+/** Method and `:param` router. Static segments take precedence over parameter segments. */
+export class Router {
+  readonly #routes: Route[] = [];
+
+  get(pattern: string, handler: Handler): this {
+    return this.add('GET', pattern, handler);
+  }
+
+  post(pattern: string, handler: Handler): this {
+    return this.add('POST', pattern, handler);
+  }
+
+  put(pattern: string, handler: Handler): this {
+    return this.add('PUT', pattern, handler);
+  }
+
+  patch(pattern: string, handler: Handler): this {
+    return this.add('PATCH', pattern, handler);
+  }
+
+  delete(pattern: string, handler: Handler): this {
+    return this.add('DELETE', pattern, handler);
+  }
+
+  add(method: Method, pattern: string, handler: Handler): this {
+    const segments = parsePattern(pattern);
+    if (this.#routes.some((route) => route.method === method && route.pattern === pattern)) {
+      throw new Error(`Duplicate route ${method} ${pattern}`);
+    }
+    this.#routes.push({ method, pattern, segments, handler });
+    return this;
+  }
+
+  resolve(method: string, pathname: string): Resolution {
+    const parts = splitPath(pathname);
+    const candidates = this.#routes
+      .filter((route) => matchesShape(route.segments, parts))
+      .sort(compareSpecificity);
+    if (candidates.length === 0) return { kind: 'not-found' };
+
+    const upper = method.toUpperCase();
+    const chosen = candidates.find((route) => route.method === upper);
+    if (chosen === undefined) {
+      const allow = [...new Set(candidates.map((route) => route.method))].sort();
+      return { kind: 'method-not-allowed', allow };
+    }
+    return { kind: 'found', handler: chosen.handler, params: extractParams(chosen.segments, parts) };
+  }
+}
+
+/** Parses a query string. A key that repeats becomes an array of its values. */
+export function parseQuery(params: URLSearchParams): Query {
+  const query = Object.create(null) as Query;
+  for (const key of new Set(params.keys())) {
+    const values = params.getAll(key);
+    query[key] = values.length === 1 ? (values[0] ?? '') : values;
+  }
+  return query;
+}
