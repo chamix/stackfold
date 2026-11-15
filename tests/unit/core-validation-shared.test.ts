@@ -43,6 +43,17 @@ describe('npmPackageNameConstraints vs. npmPackageNameSchema (ARCH-006 slice B)'
     '@jane/foo.js',
     'a',
     'a'.repeat(214), // boundary: exactly at the max length
+    // ARCH-006 fix round: the special-character rule ("~'!()*") applies only
+    // to the final path segment; the scope segment is unaffected by it.
+    '@s!/foo',
+    '@a~b/c',
+    'foo.js',
+    'addon.node',
+    '@s/a.js',
+    'a.b',
+    'a_b',
+    'my-pkg',
+    '@scope/pkg',
   ];
 
   const INVALID_NAMES: string[] = [
@@ -56,6 +67,18 @@ describe('npmPackageNameConstraints vs. npmPackageNameSchema (ARCH-006 slice B)'
     'a'.repeat(215), // boundary: one over the max length
     '@Scope/name', // uppercase in the scope segment
     '@scope/.leading-dot', // leading dot in the scoped pkg segment
+    // ARCH-006 fix round: real validate-npm-package-name@8.0.0 rejects
+    // "~'!()*" in the final path segment (validForNewPackages).
+    'foo!bar',
+    'foo~bar',
+    "it's",
+    'a(b',
+    'a)b',
+    'a*b',
+    'a~',
+    '~a',
+    '@s/foo!',
+    '@s/f~oo',
   ];
 
   for (const name of [...VALID_NAMES, ...INVALID_NAMES]) {

@@ -160,13 +160,19 @@ export const pluginIdConstraints: QuestionConstraints = {
  * - URL-safe characters only (`encodeURIComponent(name) === name`, checked
  *   per-segment for a scoped `@scope/name`).
  * - unscoped names (and a scoped name's `@scope` segment) may use any
- *   URL-safe-lowercase character; the final segment (the unscoped name
- *   itself, or a scoped name's `pkg` part) must additionally not start with
- *   `.`/`_`/`-` (an unscoped name failing this is a hard `errors` case; the
- *   real library only enforces the `.` half of this for a scoped `pkg`
- *   segment specifically — rejecting a leading `_`/`-` there too is this
- *   validator's own, stricter-but-undocumented choice, since no real-world
- *   scoped package name intentionally starts a segment that way).
+ *   URL-safe-lowercase character, INCLUDING `~'!()*`; the final segment
+ *   (the unscoped name itself, or a scoped name's `pkg` part) must
+ *   additionally (a) not start with `.`/`_`/`-` (an unscoped name failing
+ *   this is a hard `errors` case; the real library only enforces the `.`
+ *   half of this for a scoped `pkg` segment specifically — rejecting a
+ *   leading `_`/`-` there too is this validator's own, stricter-but-
+ *   undocumented choice, since no real-world scoped package name
+ *   intentionally starts a segment that way) and (b) not contain
+ *   `~'!()*` at all — confirmed against the real v8.0.0 source: the
+ *   "name can no longer contain special characters" check runs only
+ *   against the final segment (`nameMatch[1]` in `lib/index.js`, i.e. the
+ *   part after the optional `@scope/`), so `@s!/foo` is valid while
+ *   `@s/foo!` is not.
  *
  * `NPM_PACKAGE_NAME_FORMAT_SOURCE` is the *one* source of truth for this
  * shape, shared byte-for-byte between `npmPackageNameSchema` (via
@@ -175,9 +181,10 @@ export const pluginIdConstraints: QuestionConstraints = {
  * drift on the regex itself — only the message text could, and that is
  * shared too (`NPM_PACKAGE_NAME_FORMAT_MESSAGE`).
  */
-const NPM_PACKAGE_NAME_FORMAT_SOURCE = "^(?:@[a-z0-9._~!*'()-]+/)?[a-z0-9][a-z0-9._~!*'()-]*$";
+const NPM_PACKAGE_NAME_FORMAT_SOURCE = "^(?:@[a-z0-9._~!*'()-]+/)?[a-z0-9][a-z0-9._-]*$";
 const NPM_PACKAGE_NAME_FORMAT_MESSAGE =
-  'Package name must be lowercase, contain only URL-safe characters, and not start with ".", "_", or "-" ' +
+  'Package name must be lowercase, contain only URL-safe characters, not start with ".", "_", or "-", and ' +
+  'not contain "~", "\'", "!", "(", ")", or "*" in the final path segment ' +
   '(optionally scoped as "@scope/name").';
 const npmPackageNameFormatRegex = new RegExp(NPM_PACKAGE_NAME_FORMAT_SOURCE);
 

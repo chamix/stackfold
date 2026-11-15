@@ -588,7 +588,13 @@ above:
 - **`npmPackageNameConstraints`** / **`npmPackageNameSchema`** — a legal
   new npm package name: lowercase, URL-safe characters only, 1-214
   characters (`MAX_PACKAGE_NAME_LENGTH`), with an optional `@scope/`
-  prefix.
+  prefix. The final path segment (the part after any `@scope/`) must
+  not start with `.`, `_`, or `-`, and must not contain `~`, `'`, `!`,
+  `(`, `)`, or `*`; the `@scope` segment itself allows all of those
+  characters. The validator does not reject Node core-module names
+  such as `fs` or `http`, or the reserved names `node_modules` and
+  `favicon.ico` — add a custom rule if your plugin needs to forbid
+  those.
 - **`singleLineConstraints(max)`** / **`singleLineSchema(max)`** — a
   single-line string with no control characters, non-empty after
   trimming, up to `max` characters. `max` must be a positive integer, or
