@@ -129,6 +129,128 @@ export const pluginIdConstraints: QuestionConstraints = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// ARCH-006 slice B (`.agents/specs/arch-006-plugin-composition.md` D4;
+// SK-ADR-011 Decision 4) — shared validators published through the
+// `stackfold/authoring` barrel, in the same closed vocabulary as the 4
+// families above (declarative `QuestionConstraints` + a zod twin for
+// `toValidate()`-based authoring, equivalence guarded by
+// `tests/unit/core-validation-shared.test.ts`'s fixed table). No new
+// dependency (D4): `validate-npm-package-name`'s published rule set
+// (https://www.npmjs.com/package/validate-npm-package-name, `lib/index.js`
+// in the real v8.0.0 source — read directly, not from memory) is
+// reimplemented with the vocabulary this file already has, not installed.
+// ---------------------------------------------------------------------------
+
+/**
+ * `validate-npm-package-name`'s `validForNewPackages` rule set, minus its
+ * `node_modules`/`favicon.ico` exclusion list and its core-module-name
+ * warning — both are a fixed-string allowlist concern orthogonal to
+ * *format* validation, not expressible as (and not worth forcing into) this
+ * file's `matches`/`notMatches` regex vocabulary, and no plugin author's
+ * `pluginId`/package-name question has ever needed to reject exactly those
+ * two literal strings. Confirmed against the real source rather than
+ * memory: a name is `validForNewPackages` only when it has zero errors AND
+ * zero warnings; reading `lib/index.js` folds both error- and
+ * warning-producing checks into one required rule set for "valid new
+ * package name":
+ * - length: 1-214 characters (`MAX_PACKAGE_NAME_LENGTH` above).
+ * - lowercase only (a mixed-case name is a *warning*, i.e. invalid for new
+ *   packages).
+ * - URL-safe characters only (`encodeURIComponent(name) === name`, checked
+ *   per-segment for a scoped `@scope/name`).
+ * - unscoped names (and a scoped name's `@scope` segment) may use any
+ *   URL-safe-lowercase character, INCLUDING `~'!()*`; the final segment
+ *   (the unscoped name itself, or a scoped name's `pkg` part) must
+ *   additionally (a) not start with `.`/`_`/`-` (an unscoped name failing
+ *   this is a hard `errors` case; the real library only enforces the `.`
+ *   half of this for a scoped `pkg` segment specifically — rejecting a
+ *   leading `_`/`-` there too is this validator's own, stricter-but-
+ *   undocumented choice, since no real-world scoped package name
+ *   intentionally starts a segment that way) and (b) not contain
+ *   `~'!()*` at all — confirmed against the real v8.0.0 source: the
+ *   "name can no longer contain special characters" check runs only
+ *   against the final segment (`nameMatch[1]` in `lib/index.js`, i.e. the
+ *   part after the optional `@scope/`), so `@s!/foo` is valid while
+ *   `@s/foo!` is not.
+ *
+ * `NPM_PACKAGE_NAME_FORMAT_SOURCE` is the *one* source of truth for this
+ * shape, shared byte-for-byte between `npmPackageNameSchema` (via
+ * `new RegExp(...)`) and `npmPackageNameConstraints` (the same string
+ * passed straight through to `compileConstraints()`), so the two can never
+ * drift on the regex itself — only the message text could, and that is
+ * shared too (`NPM_PACKAGE_NAME_FORMAT_MESSAGE`).
+ */
+const NPM_PACKAGE_NAME_FORMAT_SOURCE = "^(?:@[a-z0-9._~!*'()-]+/)?[a-z0-9][a-z0-9._-]*$";
+const NPM_PACKAGE_NAME_FORMAT_MESSAGE =
+  'Package name must be lowercase, contain only URL-safe characters, not start with ".", "_", or "-", and ' +
+  'not contain "~", "\'", "!", "(", ")", or "*" in the final path segment ' +
+  '(optionally scoped as "@scope/name").';
+const npmPackageNameFormatRegex = new RegExp(NPM_PACKAGE_NAME_FORMAT_SOURCE);
+
+export const npmPackageNameSchema = z
+  .string()
+  .min(1, 'Package name must not be empty.')
+  .max(MAX_PACKAGE_NAME_LENGTH, `Package name must be ${MAX_PACKAGE_NAME_LENGTH} characters or fewer.`)
+  .regex(npmPackageNameFormatRegex, NPM_PACKAGE_NAME_FORMAT_MESSAGE);
+
+/** Equivalent to `npmPackageNameSchema` above. */
+export const npmPackageNameConstraints: QuestionConstraints = {
+  minLength: { value: 1, message: 'Package name must not be empty.' },
+  maxLength: { value: MAX_PACKAGE_NAME_LENGTH, message: `Package name must be ${MAX_PACKAGE_NAME_LENGTH} characters or fewer.` },
+  rules: [{ matches: NPM_PACKAGE_NAME_FORMAT_SOURCE, message: NPM_PACKAGE_NAME_FORMAT_MESSAGE }],
+};
+
+/**
+ * Rejects a non-positive-integer `max` immediately (fail-fast, same
+ * philosophy as `core/constraints.ts`'s own `assertWellFormed()` — a
+ * malformed *shape* is caught at compile/definition time, never deferred to
+ * answer-validation time). Shared by `singleLineConstraints()` and
+ * `singleLineSchema()` so both twins reject the exact same `max` values.
+ */
+function assertPositiveIntegerMax(max: number, caller: string): void {
+  if (!Number.isInteger(max) || max <= 0) {
+    throw new Error(`${caller}: "max" must be a positive integer, got ${JSON.stringify(max)}`);
+  }
+}
+
+const LINE_BREAK_SOURCE = '[\\r\\n]';
+
+/**
+ * A single line of free text, `max` characters or fewer: rejects any `\n`/
+ * `\r` (with its own, specific message — checked before the generic
+ * control-character rule below, so a newline is reported as "must be a
+ * single line" rather than lumped in with every other control character),
+ * rejects any other control character, and requires a non-empty value
+ * after trimming. `max` must be a positive integer (`assertPositiveIntegerMax()`
+ * above) — thrown synchronously, at definition time, never at answer-validation
+ * time.
+ */
+export function singleLineConstraints(max: number): QuestionConstraints {
+  assertPositiveIntegerMax(max, 'singleLineConstraints');
+  return {
+    trim: true,
+    minLength: { value: 1, message: 'Value must not be empty.' },
+    maxLength: { value: max, message: `Value must be ${max} characters or fewer.` },
+    rules: [
+      { notMatches: LINE_BREAK_SOURCE, message: 'Value must be a single line.' },
+      { notMatches: CONTROL_CHARS_SOURCE, message: 'Value must not contain control characters.' },
+    ],
+  };
+}
+
+/** Equivalent to `singleLineConstraints(max)` above. */
+export function singleLineSchema(max: number): z.ZodSchema<string> {
+  assertPositiveIntegerMax(max, 'singleLineSchema');
+  return z
+    .string()
+    .trim()
+    .min(1, 'Value must not be empty.')
+    .max(max, `Value must be ${max} characters or fewer.`)
+    .refine((v) => !new RegExp(LINE_BREAK_SOURCE).test(v), 'Value must be a single line.')
+    .refine(noControlChars, 'Value must not contain control characters.');
+}
+
 /**
  * Adapts a zod string schema into the `(value: unknown) => true | string`
  * shape `QuestionDefinition.validate` expects (`core/types.ts`) — zod is

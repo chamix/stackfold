@@ -303,7 +303,10 @@ extension), and optional lifecycle hooks (`preInit`, `postWrite`,
 [Handlebars](https://github.com/handlebars-lang/handlebars.js) — never
 `eval`. Reusable pieces ("fragments") can be mounted into a scaffold via
 `mountFragment()`/`composeFragments()`, each namespaced
-Terraform-module-style so two fragments never collide on a question id.
+Terraform-module-style so two fragments never collide on a question id —
+both are importable from `stackfold/authoring`; see [Composing fragments
+from an external plugin](#composing-fragments-from-an-external-plugin)
+below.
 
 This authoring system is how 5 of the 6 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
@@ -361,13 +364,19 @@ exported, open an issue instead of reaching into `dist/`.
 | `step` | function | Escape hatch for any other registered action: `step(action, params, { when? })`. |
 | `loadTemplate` | function | Reads a sibling `.hbs` template: `loadTemplate(import.meta.dirname, 'templates/x.hbs')`. |
 | `toValidate` | function | Adapts a zod string schema into a `validate` closure. |
-| `appNameSchema` / `descriptionSchema` / `authorSchema` / `pluginIdSchema` | zod schema | Reusable schemas for common question answers. |
-| `appNameConstraints` / `descriptionConstraints` / `authorConstraints` / `pluginIdConstraints` | `QuestionConstraints` | Declarative equivalents of the schemas above, assignable directly to a question's `constraints` field. |
+| `appNameSchema` / `descriptionSchema` / `authorSchema` / `pluginIdSchema` / `npmPackageNameSchema` / `singleLineSchema(max)` | zod schema | Reusable schemas for common question answers. |
+| `appNameConstraints` / `descriptionConstraints` / `authorConstraints` / `pluginIdConstraints` / `npmPackageNameConstraints` / `singleLineConstraints(max)` | `QuestionConstraints` | Declarative equivalents of the schemas above, assignable directly to a question's `constraints` field. |
 | `MAX_PACKAGE_NAME_LENGTH` | constant | The length limit the npm-package-name-shaped schemas/constraints above enforce. |
+| `mountFragment` | function | Mounts a `Fragment` under a namespace, rewriting its ids — see [Composing fragments from an external plugin](#composing-fragments-from-an-external-plugin) below. |
+| `composeFragments` | function | Concatenates several already-mounted fragments' `questions`/`steps`/`hooks` into one flat `Fragment`. |
+| `mergeHooks` | function | Merges two (possibly absent) hook maps, one lifecycle at a time, in declaration order — the merge `composeFragments` applies internally, exposed for standalone use. |
+| `resetFragmentNamespaceRegistry` | function | Clears the process-wide namespace registry `mountFragment` tracks — see [Testing a scaffold.ts that mounts fragments](#testing-a-scaffoldts-that-mounts-fragments) below. |
 
 `defineScaffold`'s own input type (`DefineScaffoldInput`), plus each step
 helper's options type (`FileStepOptions`, `RunCommandStepOptions`,
-`StepOptions`, `WriteFileStrategy`), are also exported for type-only use.
+`StepOptions`, `WriteFileStrategy`) and the fragment types (`Fragment`,
+`FragmentFactory`, `MountFragmentOptions`), are also exported for
+type-only use.
 
 `file`'s options (`FileStepOptions`):
 
@@ -383,6 +392,87 @@ helper's options type (`FileStepOptions`, `RunCommandStepOptions`,
 **The four `*EscapeKeys` arrays name question/answer ids, not arbitrary
 strings** — each entry must match a question's `id` whose answer value
 gets escaped, never a free-form string of your choosing.
+
+### Composing fragments from an external plugin
+
+A `Fragment` is a reusable, un-prefixed piece of a scaffold — the same
+shape as a `ScaffoldDefinition`, minus the root-only `id`/`description`/
+`help` fields. Write one as a plain function (a `FragmentFactory`) that
+returns `{ questions, steps, hooks? }` with fragment-local ids, then
+mount it into a real scaffold under a namespace:
+
+```ts
+import { defineScaffold, file, mountFragment } from 'stackfold/authoring';
+
+function greetingFragment() {
+  return {
+    questions: [{ id: 'message', message: 'Greeting message?', type: 'input' as const }],
+    steps: [file('greeting.txt', 'Hello, {{message}}!')],
+  };
+}
+
+const mounted = mountFragment(greetingFragment, undefined, { namespace: 'greet' });
+
+export default defineScaffold({
+  id: 'fragment-demo',
+  description: 'A scaffold built from one mounted fragment.',
+  questions: mounted.questions,
+  steps: mounted.steps,
+});
+```
+
+`mountFragment(factory, props, options)` calls `factory(props)` and
+returns a `Fragment` whose every local question id, `when` expression,
+Handlebars placeholder, and `deriveAnswer.from`/`to` reference has been
+rewritten to `${options.namespace}__${localId}` — joined with a double
+underscore (`__`), never a dot. In the example above, the fragment-local
+question id `message`, mounted under namespace `greet`, becomes
+`greet__message` everywhere it's referenced, including inside the
+generated `{{greet__message}}` Handlebars placeholder. A local id can
+instead be wired to an already-known external id via
+`options.inputs` (`{ localId: externalId }`); that local question is
+then omitted from the mounted result entirely, since it is never asked
+again.
+
+Each `namespace` must be unique for the lifetime of the process running
+`mountFragment` — mounting a second fragment under a namespace already
+in use throws. `composeFragments(...fragments)` concatenates several
+already-mounted fragments' `questions`/`steps`/`hooks` into one flat
+`Fragment`, which spreads into `defineScaffold(...)` the same way as a
+single mounted fragment above. `mergeHooks(a, b)` is the same
+per-lifecycle hook merge `composeFragments` applies internally, exposed
+separately for a caller composing hooks on its own.
+
+### Testing a scaffold.ts that mounts fragments
+
+`mountFragment`'s namespace registry is shared across the whole process,
+not reset between test cases. A test file that mounts the same namespace
+in more than one test case needs `resetFragmentNamespaceRegistry()`
+between them, usually in a `beforeEach` — otherwise the second mount
+throws a duplicate-namespace error:
+
+```ts
+import { beforeEach, describe, expect, it } from 'vitest';
+import { mountFragment, resetFragmentNamespaceRegistry } from 'stackfold/authoring';
+
+beforeEach(() => {
+  resetFragmentNamespaceRegistry();
+});
+
+describe('greetingFragment', () => {
+  it('mounts under the greet namespace', () => {
+    const mounted = mountFragment(greetingFragment, undefined, { namespace: 'greet' });
+    expect(mounted.questions.map((q) => q.id)).toEqual(['greet__message']);
+  });
+});
+```
+
+For the rest of your own `scaffold.ts`, import its default export
+directly (never through a synthesized `scaffold.json`) and assert on the
+resulting questions/steps — the same way the built-in plugins in this
+repo test theirs. A minimal shape check (the default export resolves to
+an object with the expected `id`, `description`, and an array `steps`)
+is enough to catch structural regressions.
 
 ### The `ScaffoldDefinition` shape
 
@@ -488,6 +578,66 @@ with no timeout or sandbox, the same trust model templates and hooks
 already have (an author already executes arbitrary code at `register`
 time) — a pathological regex can hang validation for that author's own
 plugin.
+
+#### Shared validators: npm package name and single-line text
+
+`stackfold/authoring` exports two more reusable validators, in the same
+`*Constraints`/`*Schema` pairing as `appNameConstraints`/`appNameSchema`
+above:
+
+- **`npmPackageNameConstraints`** / **`npmPackageNameSchema`** — a legal
+  new npm package name: lowercase, URL-safe characters only, 1-214
+  characters (`MAX_PACKAGE_NAME_LENGTH`), with an optional `@scope/`
+  prefix. The final path segment (the part after any `@scope/`) must
+  not start with `.`, `_`, or `-`, and must not contain `~`, `'`, `!`,
+  `(`, `)`, or `*`; the `@scope` segment itself allows all of those
+  characters. The validator does not reject Node core-module names
+  such as `fs` or `http`, or the reserved names `node_modules` and
+  `favicon.ico` — add a custom rule if your plugin needs to forbid
+  those.
+- **`singleLineConstraints(max)`** / **`singleLineSchema(max)`** — a
+  single-line string with no control characters, non-empty after
+  trimming, up to `max` characters. `max` must be a positive integer, or
+  the function throws immediately when called.
+
+Assign the `*Constraints` form directly to a question's `constraints`
+field:
+
+```ts
+import { npmPackageNameConstraints, singleLineConstraints } from 'stackfold/authoring';
+
+{
+  id: 'packageName',
+  message: 'Package name?',
+  type: 'input',
+  constraints: npmPackageNameConstraints,
+},
+{
+  id: 'tagline',
+  message: 'One-line tagline?',
+  type: 'input',
+  constraints: singleLineConstraints(80),
+},
+```
+
+Or use the `*Schema` form inside a `validate` closure, via `toValidate`:
+
+```ts
+import { npmPackageNameSchema, singleLineSchema, toValidate } from 'stackfold/authoring';
+
+{
+  id: 'packageName',
+  message: 'Package name?',
+  type: 'input',
+  validate: toValidate(npmPackageNameSchema),
+},
+{
+  id: 'tagline',
+  message: 'One-line tagline?',
+  type: 'input',
+  validate: toValidate(singleLineSchema(80)),
+},
+```
 
 #### `ActionStep`
 

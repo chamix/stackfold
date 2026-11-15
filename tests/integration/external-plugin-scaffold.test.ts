@@ -51,6 +51,18 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * different `EBUSY`/cleanup failure tied to the junction that no amount
  * of retry tuning resolved. A plain copied directory has no link to
  * anything still in use and is removed exactly like any other temp file.
+ *
+ * ARCH-006 slice A / SK-ADR-011 Decision 5: `dist/authoring/index.js` now
+ * also re-exports `fragment.ts`, which imports `core/authoring.js` at
+ * runtime (not just its types) -- loading it evaluates that module's own
+ * top-level `import Handlebars from 'handlebars'`. Confirmed by actually
+ * walking the real compiled import graph of `dist/authoring/index.js`
+ * (10 files, 2 bare packages reached: `handlebars` and `zod` -- no
+ * `json-logic-js`; `ExpressionEvaluator` is only ever a *type* import along
+ * that path, erased by `tsc`). `zod` alone no longer suffices: a
+ * `scaffold.ts` fixture that reaches `mountFragment`/`composeFragments`
+ * would otherwise fail to resolve `handlebars` from inside the copied
+ * `node_modules/stackfold/dist` tree.
  */
 async function installStackfoldAuthoringPackage(installDir: string): Promise<void> {
   const pkgDir = join(installDir, 'node_modules', 'stackfold');
@@ -62,6 +74,7 @@ async function installStackfoldAuthoringPackage(installDir: string): Promise<voi
   );
   await cp(join(REPO_ROOT, 'dist'), join(pkgDir, 'dist'), { recursive: true });
   await cp(join(REPO_ROOT, 'node_modules', 'zod'), join(installDir, 'node_modules', 'zod'), { recursive: true });
+  await cp(join(REPO_ROOT, 'node_modules', 'handlebars'), join(installDir, 'node_modules', 'handlebars'), { recursive: true });
 }
 
 let projectDir: string;
@@ -296,6 +309,132 @@ describe('external plugin — plugin-scaffold-authored (ARCH-003 follow-up)', ()
     // Real fs copies (`dist/` + `zod`) + a real `synth` pass; generous since
     // observed to vary meaningfully by environment I/O (1.3s-12.5s across
     // runs on the same machine).
+    60000
+  );
+
+  /**
+   * ARCH-006 slice A (`.agents/specs/arch-006-plugin-composition.md`;
+   * SK-ADR-011) — a `scaffold.ts` authored entirely outside this repo (no
+   * `plugin-scaffold` involved this time), importing `mountFragment` from
+   * `stackfold/authoring` for real, through the exact same real adapters as
+   * the test above: Node's own `exports` map resolution, a real `node`
+   * child process running this repo's own built `dist/cli/index.js` for
+   * `scaffold synth` (`tsImport()` + real esbuild with `packages:
+   * 'external'` inside that child — never faked), then real `plugin
+   * register` + `init` in this Vitest worker. Proves the `__` namespace
+   * separator (SK-ADR-011 Decision 3's SemVer contract) actually resolves
+   * end-to-end for an external author: the mounted fragment's question id
+   * and its Handlebars placeholder are both rewritten to `greet__message`,
+   * the real `Prompter` answers under that exact qualified key, and the
+   * written file proves the rewritten placeholder actually interpolated
+   * (not just that namespacing ran without throwing — `tests/unit/
+   * authoring-fragment.test.ts` already covers that in isolation, against
+   * `fragment.ts` directly, never through the published barrel or a real
+   * `synth`/`init` pass).
+   */
+  it(
+    'a scaffold.ts authored outside this repo can mountFragment() via stackfold/authoring, and the __ separator resolves through a real synth + register + init',
+    async () => {
+      const pluginId = 'fragment-demo';
+      const authorDir = join(projectDir, pluginId);
+      const outputDir = join(projectDir, 'fragment-demo-output');
+
+      await installStackfoldAuthoringPackage(projectDir);
+      await mkdir(authorDir, { recursive: true });
+
+      // `scaffoldSynth.ts`'s own header comment documents the precondition:
+      // `<dir>` must resolve under an ESM-`"type": "module"` package context,
+      // or Node's own module resolution fails loudly (or silently
+      // double-wraps a CommonJS-style default export). Unlike the
+      // `plugin-scaffold`-authored test case above (whose `targetDir` gets a
+      // real `package.json` from the generated template's own
+      // `writeFile('package.json', ...)` step), this fixture is hand-authored
+      // outside any scaffold template, so it must supply that same ancestor
+      // `package.json` itself.
+      await writeFile(
+        join(authorDir, 'package.json'),
+        JSON.stringify({ name: pluginId, private: true, type: 'module' }),
+        'utf8'
+      );
+
+      const scaffoldTs = `
+import { defineScaffold, file, mountFragment, resetFragmentNamespaceRegistry } from 'stackfold/authoring';
+
+// Test-isolation hook (SK-ADR-011 Decision 1 / D3): this process may run
+// other mountFragment() calls (this very file's own worker), so a fresh
+// author module explicitly resets the namespace registry before mounting
+// its own fragment, exactly as the published API documents.
+resetFragmentNamespaceRegistry();
+
+function greetingFragment() {
+  return {
+    questions: [{ id: 'message', message: 'Greeting message?', type: 'input' }],
+    steps: [file('greeting.txt', 'Hello, {{message}}!')],
+  };
+}
+
+const mounted = mountFragment(greetingFragment, undefined, { namespace: 'greet' });
+
+export default defineScaffold({
+  id: '${pluginId}',
+  description: 'ARCH-006 integration fixture: authored outside this repo, composed from one mounted fragment.',
+  questions: mounted.questions,
+  steps: mounted.steps,
+});
+`;
+      await writeFile(join(authorDir, 'scaffold.ts'), scaffoldTs, 'utf8');
+
+      // Real `node` child process running this repo's own built CLI — same
+      // reasoning as the hybrid runner above (a real `stackfold scaffold
+      // synth` invocation is its own OS process; `tsImport()`ing the whole
+      // copied `dist/` + `zod` + `handlebars` tree inside this long-lived
+      // Vitest worker risks the same real-Windows EBUSY history documented
+      // there).
+      const realProcessRunner = new ExecaProcessRunner();
+      const cliEntry = join(REPO_ROOT, 'dist', 'cli', 'index.js');
+      await realProcessRunner.run('node', [cliEntry, 'scaffold', 'synth', authorDir]);
+
+      const scaffoldJsonPath = join(authorDir, 'scaffold.json');
+      const scaffoldJson = JSON.parse(await readFile(scaffoldJsonPath, 'utf8')) as {
+        id: string;
+        questions: Array<{ id: string }>;
+        steps: Array<{ params: { content?: string } }>;
+      };
+      expect(scaffoldJson.id).toBe(pluginId);
+      // The `__` separator (SK-ADR-011 Decision 3): both the question id and
+      // the Handlebars placeholder inside the rewritten step must carry the
+      // namespaced id, never the fragment-local "message".
+      expect(scaffoldJson.questions.map((q) => q.id)).toEqual(['greet__message']);
+      expect(scaffoldJson.steps[0]?.params.content).toBe('Hello, {{greet__message}}!');
+
+      const registerDeps = pluginDeps();
+      const registerCode = await runPluginRegister(scaffoldJsonPath, { project: true }, registerDeps);
+      expect(registerDeps.stderrLines).toEqual([]);
+      expect(registerCode).toBe(0);
+
+      const initDeps: InitCommandDependencies = {
+        registry: compositeRegistry(),
+        ports: {
+          prompter: { ask: async () => ({ greet__message: 'ARCH-006' }) },
+          fileWriter: new NodeFileWriter(),
+          processRunner: realProcessRunner,
+        },
+        opener: { open: async () => {} },
+        cwd: () => projectDir,
+        stdout: () => {},
+        stderr: () => {},
+      };
+
+      const initCode = await runInit(pluginId, outputDir, initDeps, { open: false });
+      expect(initCode).toBe(0);
+
+      const greetingPath = join(outputDir, 'greeting.txt');
+      await expect(readFile(greetingPath, 'utf8')).resolves.toContain('Hello, ARCH-006!');
+
+      const unregisterDeps = pluginDeps();
+      const unregisterCode = await runPluginUnregister(pluginId, { project: true }, unregisterDeps);
+      expect(unregisterCode).toBe(0);
+    },
     60000
   );
 });
