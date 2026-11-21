@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-11-21
+
+### Added
+
+- **`node-http-api-stackfold`**, a new built-in plugin: a dependency-free Node.js
+  and TypeScript HTTP microservice built on `node:http` only (no runtime
+  dependencies), with a request router, JSON body parsing, structured JSON
+  logging, `/health` and `/ready` probes, and graceful shutdown. Questions:
+  `projectName`, `description`, `port`, and three optional features that default
+  to off: `cors`, `docker` (a `Dockerfile` that uses `npm ci` when a
+  `package-lock.json` exists and `npm install` otherwise) and `exampleResource`
+  (a CRUD-style `/api/v1/items` resource). Run `stackfold list` to see it.
+- `stackfold/authoring` now exports the fragment composition API:
+  `mountFragment`, `composeFragments`, `mergeHooks` and
+  `resetFragmentNamespaceRegistry`, plus the `Fragment`, `FragmentFactory` and
+  `MountFragmentOptions` types. They were documented but could not be imported
+  from the published package. The README has new sections on composing fragments
+  from an external plugin and on testing a `scaffold.ts` that mounts them.
+- `stackfold/authoring` now exports shared validators for common questions:
+  `npmPackageNameSchema` / `npmPackageNameConstraints` (lowercase, URL-safe,
+  optionally scoped; rejects `~ ' ! ( ) *` in the last path segment, as npm does
+  for new packages) and `singleLineSchema(max)` / `singleLineConstraints(max)`
+  (trimmed, non-empty, single line, no control characters). The `*Constraints`
+  versions are plain data, so they survive `scaffold synth` into `scaffold.json`.
+
 ## [2.4.0] - 2026-11-10
 
 ### Added
