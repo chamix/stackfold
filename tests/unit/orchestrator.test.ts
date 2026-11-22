@@ -263,6 +263,68 @@ describe('runPlugin — Template Method sequence', () => {
   });
 });
 
+describe('runPlugin — FIX-005: constraints.trim normalizes the stored answer', () => {
+  // validate() mirrors compileConstraints()'s own trim-then-check semantics
+  // (core/constraints.ts): it evaluates the TRIMMED value — a padded answer
+  // must pass — while the stored answer is still the raw one until
+  // normalizeAnswer() runs afterwards.
+  const TRIMMED_QUESTION: QuestionDefinition = {
+    id: 'name',
+    message: 'Name?',
+    type: 'input',
+    constraints: { trim: true },
+    validate: (v) => (typeof v === 'string' && v.trim().length > 0 ? true : 'must not be blank'),
+  };
+
+  it('a padded value that passes validation reaches buildBlueprint trimmed', async () => {
+    const h = harness({
+      questions: [TRIMMED_QUESTION],
+      answers: { name: '  padded  ' },
+    });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(h.calls).toContainEqual({ step: 'buildBlueprint', answers: { name: 'padded' } });
+  });
+
+  it('a padded default is stored trimmed, same as an explicit answer', async () => {
+    const question: QuestionDefinition = { ...TRIMMED_QUESTION, default: '  default-padded  ' };
+    const h = harness({ questions: [question], answers: {} });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(h.calls).toContainEqual({ step: 'buildBlueprint', answers: { name: 'default-padded' } });
+  });
+
+  it('an invalid padded value is still rejected, with the same message as before this fix', async () => {
+    // validate() here runs against the RAW value (checkAnswerType/validate run
+    // before normalizeAnswer) — an empty-after-trim value must still be
+    // rejected by the question's own validate(), not silently accepted.
+    const question: QuestionDefinition = {
+      id: 'name',
+      message: 'Name?',
+      type: 'input',
+      constraints: { trim: true },
+      validate: (v) => (typeof v === 'string' && v.trim().length > 0 ? true : 'must not be blank'),
+    };
+    const h = harness({ questions: [question], answers: { name: '   ' } });
+
+    const err = await runPlugin(h.plugin, TARGET, h.ports).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(InvalidAnswersError);
+    expect((err as InvalidAnswersError).issues).toEqual([{ questionId: 'name', message: 'must not be blank' }]);
+  });
+
+  it('a question without constraints.trim receives the raw, unnormalized value', async () => {
+    const question: QuestionDefinition = { id: 'name', message: 'Name?', type: 'input' };
+    const h = harness({ questions: [question], answers: { name: '  padded  ' } });
+
+    await runPlugin(h.plugin, TARGET, h.ports);
+
+    expect(h.calls).toContainEqual({ step: 'buildBlueprint', answers: { name: '  padded  ' } });
+  });
+});
+
 describe('runPlugin — §3.1 no partial answers reach transformation', () => {
   it('fills in declared defaults for unanswered questions', async () => {
     const h = harness({

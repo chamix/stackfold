@@ -550,7 +550,10 @@ hand-written `scaffold.json` with no `scaffold.js` needed.
 ```
 
 - **`trim`** — when `true`, every check below evaluates the trimmed
-  value; the stored answer itself is never altered.
+  value, and the stored answer is also the trimmed value — this is what
+  the plugin, its hooks, and its templates receive. Text with no
+  leading or trailing whitespace is unchanged by this. Only `input`
+  questions with a string answer are affected.
 - **`minLength`** / **`maxLength`** — reject when the value's length is
   below/above `value`. Length is counted in Unicode code points, not
   UTF-16 units — an emoji or other astral character counts as one, not

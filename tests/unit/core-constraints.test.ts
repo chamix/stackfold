@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { compileConstraints } from '../../src/core/constraints.js';
-import type { QuestionConstraints } from '../../src/core/types.js';
+import { compileConstraints, normalizeAnswer } from '../../src/core/constraints.js';
+import type { QuestionConstraints, QuestionDefinition } from '../../src/core/types.js';
 
 describe('compileConstraints — shape/order (SYNTH-002 D2)', () => {
   it('returns true for a value satisfying every check', () => {
@@ -153,5 +153,89 @@ describe('compileConstraints — malformed constraints (fail-fast, SYNTH-002 inv
 
   it('throws synchronously at compile time, never deferred to the returned check function', () => {
     expect(() => compileConstraints({ rules: [{ matches: '(unterminated', message: 'm' }] })).toThrow();
+  });
+});
+
+describe('normalizeAnswer — the value resolveAnswers() stores (FIX-005)', () => {
+  const trimmedInput: QuestionDefinition = {
+    id: 'name',
+    message: 'Name?',
+    type: 'input',
+    constraints: { trim: true },
+  };
+  const noTrimInput: QuestionDefinition = { id: 'name', message: 'Name?', type: 'input' };
+  const trimFalseInput: QuestionDefinition = {
+    id: 'name',
+    message: 'Name?',
+    type: 'input',
+    constraints: { trim: false },
+  };
+  const noConstraintsInput: QuestionDefinition = { id: 'name', message: 'Name?', type: 'input' };
+  const confirmQuestion: QuestionDefinition = { id: 'ts', message: 'TS?', type: 'confirm' };
+  const selectQuestion: QuestionDefinition = {
+    id: 'ui',
+    message: 'UI?',
+    type: 'select',
+    choices: ['a', 'b'],
+  };
+
+  it('trims a string answer when the question declares constraints.trim === true', () => {
+    expect(normalizeAnswer(trimmedInput, '  padded  ')).toBe('padded');
+  });
+
+  it('leaves the value unchanged when constraints.trim is absent', () => {
+    expect(normalizeAnswer(noTrimInput, '  padded  ')).toBe('  padded  ');
+  });
+
+  it('leaves the value unchanged when constraints.trim is explicitly false', () => {
+    expect(normalizeAnswer(trimFalseInput, '  padded  ')).toBe('  padded  ');
+  });
+
+  it('leaves the value unchanged (same reference) when the question has no constraints at all', () => {
+    const value = '  padded  ';
+    expect(normalizeAnswer(noConstraintsInput, value)).toBe(value);
+  });
+
+  it('leaves a number answer unchanged even when trim: true is declared (non-string)', () => {
+    expect(normalizeAnswer(trimmedInput, 42)).toBe(42);
+  });
+
+  it('leaves a boolean (confirm) answer unchanged — never reaches the string branch', () => {
+    expect(normalizeAnswer(confirmQuestion, true)).toBe(true);
+  });
+
+  it('leaves a select answer unchanged, even if (hypothetically) constraints.trim were set — only "input" qualifies', () => {
+    expect(normalizeAnswer(selectQuestion, 'a')).toBe('a');
+  });
+
+  it('is idempotent: normalizing an already-normalized value changes nothing further', () => {
+    const once = normalizeAnswer(trimmedInput, '  padded  ');
+    const twice = normalizeAnswer(trimmedInput, once);
+    expect(twice).toBe(once);
+    expect(twice).toBe('padded');
+  });
+
+  it('a string with no leading/trailing whitespace is returned unchanged (additivity)', () => {
+    expect(normalizeAnswer(trimmedInput, 'already-trimmed')).toBe('already-trimmed');
+  });
+
+  it('empty string stays empty', () => {
+    expect(normalizeAnswer(trimmedInput, '')).toBe('');
+  });
+
+  it('whitespace-only string trims to empty', () => {
+    expect(normalizeAnswer(trimmedInput, '   ')).toBe('');
+  });
+
+  describe('same whitespace definition as String.prototype.trim() (matches compileConstraints\' own validation)', () => {
+    it('trims Unicode non-breaking space (U+00A0) and BOM/zero-width-no-break (U+FEFF) at both ends', () => {
+      expect(normalizeAnswer(trimmedInput, '  hello  ')).toBe('hello');
+      expect(normalizeAnswer(trimmedInput, '﻿hello﻿')).toBe('hello');
+    });
+
+    it('trims line breaks (\\n, \\r\\n) at both ends but preserves internal ones', () => {
+      expect(normalizeAnswer(trimmedInput, '\n\r\nhello world\n')).toBe('hello world');
+      expect(normalizeAnswer(trimmedInput, '  line1\nline2  ')).toBe('line1\nline2');
+    });
   });
 });
