@@ -48,10 +48,9 @@ Run `stackfold list` for the live, authoritative list. Currently:
   windows, external-link policy, narrow preload bridge), with optional
   Settings (Dark Mode), Skins, and About/Help features. Hand-written,
   via the `questions()`/`buildBlueprint()` plugin contract.
-- **`electron-stackfold`** — functionally identical to `electron-ts`,
-  authored declaratively via the scaffold-authoring system (see below).
-  Kept side by side with `electron-ts` indefinitely; `stackfold` itself
-  is init-only, so there's no forced migration for either.
+- **`electron-stackfold`** — generates the same project as `electron-ts`.
+  Both stay available side by side, and `stackfold` itself is init-only,
+  so there is no migration for either.
 - **`web-app-stackfold`** — a web app: a single, dependency-free
   standalone HTML file, or a Vite-powered SPA in React, Vue, or plain
   vanilla TS. One `appType` question selects the variant.
