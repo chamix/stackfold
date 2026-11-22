@@ -139,6 +139,7 @@ export async function runInit(
     stdout(`Scaffolded ${plugin.id} project in ${result.targetDir} (${result.filesWritten.length} files).`);
 
     await maybePromptToOpen(result, deps, options, nonInteractiveAnswers);
+    printClosingLegend(stdout);
 
     return 0;
   } catch (err) {
@@ -152,6 +153,26 @@ export async function runInit(
     reportFailure(err, stderr, rollbackEnabled);
     return isPromptAbort(err) ? 130 : 1;
   }
+}
+
+/**
+ * Closing message of a successful `init`, last thing printed so it is what a
+ * person at the terminal ends up reading. Same wording as the optional intro
+ * block of `web-app-stackfold` (keep the two in sync by hand). Skipped when
+ * stdout is not a TTY so scripts, CI and agents that capture the output are
+ * not handed prose they never asked for — the same criterion as the
+ * "open the project" prompt below.
+ */
+const CLOSING_LEGEND: readonly string[] = [
+  '',
+  "Built with Stackfold. Stackfold's job ends here — there's no watcher, no re-generation, nothing left to run.",
+  "This is where Stackfold's help ends. It got you past the blank-page barrier — creating the folders, wiring everything up behind the scenes — and left you a solid skeleton to build your ideas on. :)",
+  'Stackfold is a personal, open-source project, made for the community. Ideas, bug reports and contributions are welcome on GitHub: https://github.com/chamix/stackfold',
+];
+
+function printClosingLegend(write: (line: string) => void): void {
+  if (!process.stdout.isTTY) return;
+  for (const line of CLOSING_LEGEND) write(line);
 }
 
 const OPEN_FOLDER = 'Open folder';

@@ -109,16 +109,14 @@ const REGISTRY_ANCHOR = '// stackfold-plugin-registry:end';
 export default defineScaffold({
   id: 'plugin-builder',
   description:
-    'Scaffolds a brand-new stackfold plugin, authored as a TS scaffold.ts + synth, and ' +
-    "registers it into stackfold's own plugin registry.",
+    'Scaffolds a new stackfold plugin inside a stackfold repository checkout and registers it in the CLI.',
   help: {
     name: 'Plugin Builder',
     details:
-      'Generates a new stackfold plugin as a TS-authored scaffold.ts + sibling .hbs templates under ' +
-      'src/plugins/<pluginId>/, synthesizes its canonical scaffold.json via a real `stackfold scaffold ' +
-      'synth` invocation, and registers it into src/cli/index.ts via the patchFile hook action. Run from ' +
-      'the root of a stackfold checkout. For a standalone plugin that needs no checkout, use ' +
-      '`plugin-scaffold` instead.',
+      'Generates a new plugin as a TypeScript scaffold.ts plus sibling .hbs templates under ' +
+      'src/plugins/<pluginId>/, compiles its scaffold.json with `stackfold scaffold synth`, and registers it ' +
+      'in src/cli/index.ts. Run from the root of a stackfold checkout. For a standalone plugin that needs no ' +
+      'checkout, use `plugin-scaffold` instead.',
   },
 
   questions: [

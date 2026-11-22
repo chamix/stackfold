@@ -28,7 +28,7 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
     help: {
       name: 'Electron + TypeScript',
       details:
-        'Generates a Tier-1 Electron shell: context isolation + a disabled ' +
+        'Generates an Electron shell: context isolation + a disabled ' +
         'Node integration renderer, a narrow typed preload bridge (no raw ' +
         'ipcRenderer exposure), and a policy that opens external links in ' +
         'the OS browser instead of a new Electron window. ' +

@@ -213,6 +213,17 @@ describe('runInit — argument handling (exit 1, nothing touched)', () => {
 });
 
 describe('runInit — success', () => {
+  // The closing legend is TTY-only; pin the flag so these assertions do not
+  // depend on how the test runner's own stdout happens to be attached.
+  let originalIsTTY: boolean | undefined;
+  beforeEach(() => {
+    originalIsTTY = process.stdout.isTTY;
+    process.stdout.isTTY = false;
+  });
+  afterEach(() => {
+    process.stdout.isTTY = originalIsTTY;
+  });
+
   it('exit 0, reports the target and file count on stdout', async () => {
     const s = setup();
 
@@ -556,6 +567,57 @@ describe('runInit — non-interactive answers via --config / --answer (testing f
 
     expect(s.askCalls).toEqual([1]);
     expect(received).toEqual({ appName: 'From Interactive Prompt', includeSettings: true });
+  });
+});
+
+describe('runInit — closing legend', () => {
+  let originalIsTTY: boolean | undefined;
+  beforeEach(() => {
+    originalIsTTY = process.stdout.isTTY;
+  });
+  afterEach(() => {
+    process.stdout.isTTY = originalIsTTY;
+  });
+
+  it('on a TTY, prints the Stackfold legend after the scaffold report', async () => {
+    process.stdout.isTTY = true;
+    const s = setup();
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(0);
+
+    expect(s.stdout[0]).toBe(`Scaffolded fake project in ${resolve(CWD, 'my-app')} (2 files).`);
+    const text = s.stdout.slice(1).join('\n');
+    expect(text).toContain("Stackfold's job ends here");
+    expect(text).toContain('blank-page barrier');
+    expect(text).toContain('https://github.com/chamix/stackfold');
+  });
+
+  it('on a TTY, the legend is the last thing printed (after the open-the-project prompt)', async () => {
+    process.stdout.isTTY = true;
+    const s = setup();
+
+    await runInit('fake', 'my-app', s.deps);
+
+    expect(s.askedQuestions.at(-1)?.[0]?.id).toBe('openChoice');
+    expect(s.stdout.at(-1)).toContain('https://github.com/chamix/stackfold');
+  });
+
+  it('without a TTY (piped output, CI), prints only the scaffold report', async () => {
+    process.stdout.isTTY = false;
+    const s = setup();
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(0);
+
+    expect(s.stdout).toEqual([`Scaffolded fake project in ${resolve(CWD, 'my-app')} (2 files).`]);
+  });
+
+  it('a failed init prints no legend', async () => {
+    process.stdout.isTTY = true;
+    const s = setup({ askError: new Error('boom') });
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(1);
+
+    expect(s.stdout).toEqual([]);
   });
 });
 

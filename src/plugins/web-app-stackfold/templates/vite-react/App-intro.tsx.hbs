@@ -34,6 +34,12 @@ const INTRO_CSS = `
 .sf-intro a {
   color: #2563eb;
 }
+.sf-intro code {
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+  background: #f3f4f6;
+  border-radius: 4px;
+}
 .sf-intro .sf-intro-note {
   margin-bottom: 0;
   font-size: 0.9rem;
@@ -51,7 +57,8 @@ export function App(): JSX.Element {
         Built with <a href="https://github.com/chamix/stackfold">Stackfold</a>. Stackfold's job ends here — there's no watcher, no re-generation, nothing left to run.
       </p>
       <p>This is where Stackfold's help ends. It got you past the blank-page barrier — creating the folders, wiring everything up behind the scenes — and left you a solid skeleton to build your ideas on. :)</p>
-      <p>Stackfold is a personal, open-source project, made for the community.</p>
+      <p>Stackfold is a personal, open-source project, made for the community. Ideas, bug reports and contributions are welcome on <a href="https://github.com/chamix/stackfold">GitHub</a>.</p>
+      <p>This page is a <a href="https://react.dev">React</a> component — it lives in <code>src/App.tsx</code>.</p>
       <p className="sf-intro-note">Edit this file (and everything else in this project) freely from here on. Replace this block whenever you're ready.</p>
     </main>
   );

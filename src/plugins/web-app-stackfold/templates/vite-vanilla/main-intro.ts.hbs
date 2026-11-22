@@ -75,8 +75,16 @@ export function renderApp(container: HTMLElement): void {
     "This is where Stackfold's help ends. It got you past the blank-page barrier — creating the folders, wiring everything up behind the scenes — and left you a solid skeleton to build your ideas on. :)";
   main.appendChild(storyPara);
 
+  const repoLink = document.createElement('a');
+  repoLink.href = 'https://github.com/chamix/stackfold';
+  repoLink.textContent = 'GitHub';
+
   const communityPara = document.createElement('p');
-  communityPara.textContent = "Stackfold is a personal, open-source project, made for the community.";
+  communityPara.append(
+    "Stackfold is a personal, open-source project, made for the community. Ideas, bug reports and contributions are welcome on ",
+    repoLink,
+    '.'
+  );
   main.appendChild(communityPara);
 
   const notePara = document.createElement('p');
