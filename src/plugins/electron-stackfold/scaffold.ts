@@ -10,7 +10,10 @@
  * but simpler: none of this plugin's 6 questions declare a `validate`
  * closure or a dynamic default, so (unlike `plugin-builder`) there is no
  * function value anywhere in this `ScaffoldDefinition` that `scaffold.json`
- * would silently drop. `src/cli/index.ts` therefore keeps loading this
+ * would silently drop. `appName`/`description`/`author` declare
+ * `constraints` (data, not a closure — same pattern as
+ * `web-app-stackfold/scaffold.ts`), which also survives `scaffold synth`
+ * without loss. `src/cli/index.ts` therefore keeps loading this
  * plugin's *compiled* `scaffold.json` at runtime, unchanged — this file is
  * the authoring source that `scaffold.json` is regenerated from via a real
  * `stackfold scaffold synth src/plugins/electron-stackfold` invocation, not
@@ -38,6 +41,7 @@
  */
 import { defineScaffold, file, step } from '../../authoring/builder.js';
 import { loadTemplate } from '../../authoring/templateLoader.js';
+import { appNameConstraints, authorConstraints, descriptionConstraints } from '../../core/validation.js';
 
 export const DEFAULT_APP_NAME = 'my-electron-app';
 export const DEFAULT_DESCRIPTION = 'An Electron + TypeScript desktop app.';
@@ -125,18 +129,21 @@ export default defineScaffold({
       message: 'Application name',
       type: 'input',
       default: DEFAULT_APP_NAME,
+      constraints: appNameConstraints,
     },
     {
       id: 'description',
       message: 'Short description',
       type: 'input',
       default: DEFAULT_DESCRIPTION,
+      constraints: descriptionConstraints,
     },
     {
       id: 'author',
       message: 'Author (optional, used for package.json and an MIT LICENSE)',
       type: 'input',
       default: DEFAULT_AUTHOR,
+      constraints: authorConstraints,
     },
     {
       id: 'includeSettings',
@@ -191,7 +198,7 @@ export default defineScaffold({
     file('src/main/index.ts', MAIN_INDEX_TEMPLATE),
     file('src/preload/api.ts', PRELOAD_API_TEMPLATE),
     file('src/preload/index.ts', PRELOAD_INDEX_TEMPLATE),
-    file('src/renderer/index.html', RENDERER_INDEX_HTML_TEMPLATE),
+    file('src/renderer/index.html', RENDERER_INDEX_HTML_TEMPLATE, { htmlEscapeKeys: ['appName', 'description'] }),
     file('src/renderer/app.css', RENDERER_APP_CSS_TEMPLATE),
     file('src/renderer/theme.ts', RENDERER_THEME_TEMPLATE, { when: WHEN_SETTINGS }),
     file('src/renderer/skins.ts', RENDERER_SKINS_TEMPLATE, { when: WHEN_SKINS }),
