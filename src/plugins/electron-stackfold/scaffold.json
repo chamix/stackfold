@@ -10,19 +10,74 @@
       "id": "appName",
       "message": "Application name",
       "type": "input",
-      "default": "my-electron-app"
+      "default": "my-electron-app",
+      "constraints": {
+        "trim": true,
+        "minLength": {
+          "value": 1,
+          "message": "App name must not be empty."
+        },
+        "maxLength": {
+          "value": 100,
+          "message": "App name must be 100 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "App name must not contain control characters."
+          },
+          {
+            "matches": "[a-zA-Z0-9]",
+            "message": "App name must contain at least one letter or digit."
+          }
+        ]
+      }
     },
     {
       "id": "description",
       "message": "Short description",
       "type": "input",
-      "default": "An Electron + TypeScript desktop app."
+      "default": "An Electron + TypeScript desktop app.",
+      "constraints": {
+        "trim": true,
+        "maxLength": {
+          "value": 200,
+          "message": "Description must be 200 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "Description must not contain control characters."
+          },
+          {
+            "notMatches": "\\n",
+            "message": "Description must be a single line."
+          }
+        ]
+      }
     },
     {
       "id": "author",
       "message": "Author (optional, used for package.json and an MIT LICENSE)",
       "type": "input",
-      "default": ""
+      "default": "",
+      "constraints": {
+        "trim": true,
+        "maxLength": {
+          "value": 150,
+          "message": "Author must be 150 characters or fewer."
+        },
+        "rules": [
+          {
+            "notMatches": "[\\x00-\\x1F\\x7F]",
+            "message": "Author must not contain control characters."
+          },
+          {
+            "notMatches": "\\n",
+            "message": "Author must be a single line."
+          }
+        ]
+      }
     },
     {
       "id": "includeSettings",
@@ -332,7 +387,11 @@
       "action": "writeFile",
       "params": {
         "path": "src/renderer/index.html",
-        "content": "<!doctype html>\n<html>\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>{{appName}}</title>\n    <link rel=\"stylesheet\" href=\"./app.css\" />\n  </head>\n  <body>\n    <main>\n      <h1>{{appName}}</h1>\n      <p>{{description}}</p>\n    </main>\n{{#if includeSettings}}    <script type=\"module\" src=\"./theme.js\"></script>\n{{/if}}{{#if includeSkins}}    <script type=\"module\" src=\"./skins.js\"></script>\n{{/if}}  </body>\n</html>\n"
+        "content": "<!doctype html>\n<html>\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>{{appName}}</title>\n    <link rel=\"stylesheet\" href=\"./app.css\" />\n  </head>\n  <body>\n    <main>\n      <h1>{{appName}}</h1>\n      <p>{{description}}</p>\n    </main>\n{{#if includeSettings}}    <script type=\"module\" src=\"./theme.js\"></script>\n{{/if}}{{#if includeSkins}}    <script type=\"module\" src=\"./skins.js\"></script>\n{{/if}}  </body>\n</html>\n",
+        "htmlEscapeKeys": [
+          "appName",
+          "description"
+        ]
       }
     },
     {
