@@ -172,15 +172,14 @@ const composed = composeFragments(baseTs, viteReact, viteVanilla, viteVue, vites
 export default defineScaffold({
   id: 'web-app-stackfold',
   description:
-    'Web app (standalone HTML, or an SPA in React/Vue/vanilla + Vite) — merges the old web-app-spa and ' +
-    'web-app-standalone-html plugins into one, authored via the scaffold-authoring system.',
+    'Web app: a standalone HTML file, or a Vite single-page app in React, Vue or vanilla TypeScript ' +
+    '(with vitest and ESLint).',
   help: {
     name: 'Web App',
     details:
       'Choose one appType during init: a single, dependency-free standalone HTML file (no server, no network ' +
       'after load), or a Vite-powered single-page app in React, Vue, or plain vanilla TS (client-side routing-' +
-      'ready, no SSR). vitest + eslint are wired in for every SPA choice, regardless of framework. Replaces the ' +
-      'old web-app-spa/web-app-standalone-html plugins — same generated output per choice, one merged plugin.',
+      'ready, no SSR). vitest + eslint are wired in for every SPA choice, regardless of framework.',
   },
 
   questions: [

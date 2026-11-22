@@ -103,17 +103,16 @@ const PACKAGE_JSON_TEMPLATE = loadTemplate(import.meta.dirname, 'templates/packa
 export default defineScaffold({
   id: 'plugin-scaffold',
   description:
-    'Scaffolds a brand-new, standalone stackfold plugin that needs no repo checkout — authored as a TS ' +
-    'scaffold.ts importing the public "stackfold/authoring" DSL, synthesized via a real `stackfold scaffold ' +
-    "synth` invocation, with the exact `stackfold plugin register` command printed at the end.",
+    'Scaffolds a standalone stackfold plugin that needs no repository checkout: a TypeScript scaffold.ts ' +
+    'using the "stackfold/authoring" API, compiled with `stackfold scaffold synth`. Prints the ' +
+    '`stackfold plugin register` command to run next.',
   help: {
     name: 'Plugin Scaffold',
     details:
-      'Generates a new, standalone stackfold plugin as a TS-authored scaffold.ts + sibling .hbs templates + ' +
-      'its own package.json ("type": "module"), importing the authoring DSL from the installed "stackfold" ' +
-      'package itself — no repo checkout needed. Synthesizes its canonical scaffold.json via a real ' +
-      '`stackfold scaffold synth` invocation, then prints the exact `stackfold plugin register` command to ' +
-      'run next. Run `stackfold init plugin-scaffold <pluginId>` from the directory the new plugin should be ' +
+      'Generates a standalone stackfold plugin: a TypeScript scaffold.ts plus sibling .hbs templates and its ' +
+      'own package.json ("type": "module"), importing the authoring API from the installed "stackfold" ' +
+      'package — no repository checkout needed. Compiles its scaffold.json with `stackfold scaffold synth`, ' +
+      'then prints the exact `stackfold plugin register` command to run next. Run `stackfold init plugin-scaffold <pluginId>` from the directory the new plugin should be ' +
       'created in (its own root ends up being exactly that directory).',
   },
 
