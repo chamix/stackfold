@@ -46,8 +46,8 @@ Run `stackfold list` for the live, authoritative list. Currently:
 
 - **`electron-ts`** — Electron + TypeScript desktop app shell (sandboxed
   windows, external-link policy, narrow preload bridge), with optional
-  Settings (Dark Mode), Skins, and About/Help features. Hand-written,
-  via the `questions()`/`buildBlueprint()` plugin contract.
+  Settings (Dark Mode), Skins, and About/Help features. Recommended for
+  new projects.
 - **`electron-stackfold`** — generates the same project as `electron-ts`.
   Both stay available side by side, and `stackfold` itself is init-only,
   so there is no migration for either.

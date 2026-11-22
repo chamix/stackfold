@@ -192,14 +192,34 @@ describe('runInit — argument handling (exit 1, nothing touched)', () => {
     expect(s.stdout).toEqual([]);
   });
 
-  it('unknown stack: exit 1, names the stack and lists the available ones', async () => {
+  it('unknown stack: exit 1, names the stack and points to `stackfold list` instead of printing the catalog', async () => {
     const s = setup();
 
     expect(await runInit('rails', 'my-app', s.deps)).toBe(1);
 
-    expect(s.stderr.join('\n')).toContain('unknown stack "rails"');
-    expect(section(s.stderr, 'Available stacks:')).toHaveLength(4); // 2 plugins x (heading + description)
+    expect(s.stderr).toEqual(['stackfold init: unknown stack "rails". Run `stackfold list` to see the available stacks.']);
     expect(s.ensuredDirs).toEqual([]);
+  });
+
+  it('no terminal to prompt in and no answers given: exit 1 with a clear message, nothing touched', async () => {
+    const s = setup();
+    s.deps.canPrompt = () => false;
+
+    expect(await runInit('fake', 'my-app', s.deps)).toBe(1);
+
+    expect(s.stderr).toHaveLength(1);
+    expect(s.stderr[0]).toContain('no interactive terminal is available');
+    expect(s.stderr[0]).toContain('--config <file> or --answer key=value');
+    expect(s.stderr[0]).toContain('stackfold info fake');
+    expect(s.ensuredDirs).toEqual([]);
+    expect(s.askCalls).toHaveLength(0);
+  });
+
+  it('no terminal to prompt in but --answer given: runs normally', async () => {
+    const s = setup();
+    s.deps.canPrompt = () => false;
+
+    expect(await runInit('fake', 'my-app', s.deps, { answer: ['x=1'] })).toBe(0);
   });
 
   it('missing directory: exit 1, usage names the resolved stack', async () => {

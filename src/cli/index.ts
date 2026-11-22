@@ -112,6 +112,7 @@ registerInitCommand(program, {
     fileRemover: new NodeFileRemover(),
   },
   opener: new NativeOpener(),
+  canPrompt: () => Boolean(process.stdin.isTTY),
   cwd: () => process.cwd(),
   stdout: (line) => console.log(line),
   stderr: (line) => console.error(line),

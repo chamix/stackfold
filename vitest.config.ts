@@ -62,6 +62,13 @@ export default defineConfig({
        * config; Vitest's default include glob would otherwise pick them up and fail.
        */
       '**/.agents/**',
+      /**
+       * `.claude/` holds agent worktrees (`.claude/worktrees/agent-*`), each a full
+       * checkout of the repo without `node_modules`. Vitest's default include glob
+       * would run every suite a second time from there, inflating the counts and
+       * failing on missing dependencies in files that pass in the real tree.
+       */
+      '**/.claude/**',
     ],
     /**
      * `.manual-test-playground/**` holds standalone scaffolded apps
