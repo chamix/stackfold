@@ -227,17 +227,17 @@ describe('electron-stackfold vs. electron-ts — input parity (constraints + HTM
   });
 
   /**
-   * Declared exception (until a later, separate task normalizes stored
-   * leading/trailing whitespace at the orchestrator level): `constraints.trim`
-   * validates the *trimmed* value but, by documented contract, never alters
-   * the stored answer itself. `electron-ts` trims by hand in its own
-   * `resolveContext()`; `electron-stackfold` does not yet, so a name padded
-   * with spaces keeps that padding everywhere it's interpolated as free
-   * text (e.g. the generated `<title>`) — except the npm package `name`
-   * field, which both sides derive through the same slugging transform and
-   * therefore agree on regardless.
+   * FIX-005 closed the exception this test used to document: `constraints.trim`
+   * now normalizes the *stored* answer, not just the value checks run
+   * against (`core/constraints.ts`'s `normalizeAnswer()`, applied in
+   * `core/orchestrator.ts`'s `resolveAnswers()`). `electron-ts` trims by
+   * hand in its own `resolveContext()` (trimming an already-trimmed value is
+   * the identity, so it needed no change); `electron-stackfold` now gets the
+   * same trimmed `appName` through the orchestrator instead. A name padded
+   * with spaces therefore produces an identical tree on both sides, same as
+   * every other accepted-answer case in this file.
    */
-  it('declared exception: leading/trailing-space appName — same structure and package name, but the visible name differs', async () => {
+  it('leading/trailing-space appName produces a byte-identical tree to electron-ts (FIX-005)', async () => {
     const { electronTs, electronStackfold } = makePlugins();
     const answers: Answers = {
       appName: '  spaced  name  ',
@@ -257,14 +257,13 @@ describe('electron-stackfold vs. electron-ts — input parity (constraints + HTM
     const tsTree = relativeTree(tsResult.files);
     const stackfoldTree = relativeTree(stackfoldResult.files);
     expect([...stackfoldTree.keys()].sort()).toEqual([...tsTree.keys()].sort());
+    for (const [path, content] of tsTree) {
+      expect(stackfoldTree.get(path), `content mismatch at "${path}"`).toBe(content);
+    }
 
-    const tsPkg = JSON.parse(tsTree.get('package.json') ?? '{}') as { name?: string };
-    const stackfoldPkg = JSON.parse(stackfoldTree.get('package.json') ?? '{}') as { name?: string };
-    expect(stackfoldPkg.name).toBe(tsPkg.name);
-
-    // The visible title legitimately differs — this IS the declared exception.
+    // Both sides now agree the visible title is trimmed too.
     expect(tsTree.get('src/renderer/index.html')).toContain('<title>spaced  name</title>');
-    expect(stackfoldTree.get('src/renderer/index.html')).toContain('<title>  spaced  name  </title>');
+    expect(stackfoldTree.get('src/renderer/index.html')).toContain('<title>spaced  name</title>');
   });
 
   /**

@@ -29,6 +29,7 @@
  * Without the port (or with `keepOnFailure`), behavior is byte-for-byte
  * today's best-effort reporting.
  */
+import { normalizeAnswer } from './constraints.js';
 import type { FileRemover, FileWriter, ProcessRunner, Prompter } from './ports.js';
 import type {
   AnswerValue,
@@ -431,6 +432,14 @@ function assertValidQuestions(pluginId: string, questions: QuestionDefinition[])
  * §3.1: every declared question resolved (answer or default), every answer
  * of the right type and passing its validation rule. Undeclared keys are
  * dropped so a plugin only ever sees answers to questions it asked.
+ * `normalizeAnswer()` (`core/constraints.ts`) runs last, after the type
+ * check and `validate()` have both already accepted the value: for a
+ * question declaring `constraints.trim === true`, the value stored (and
+ * handed to `preInit`/`buildBlueprint`/`postWrite`/`postInit`) is the same
+ * trimmed string that was just validated, never the raw one. This is the
+ * single point every answer channel (interactive `Prompter`, `--answer`,
+ * `--config`, and declared defaults) converges through, so the fix applies
+ * uniformly regardless of where the answer came from.
  */
 function resolveAnswers(questions: QuestionDefinition[], raw: Answers): Answers {
   const resolved: Answers = {};
@@ -456,7 +465,7 @@ function resolveAnswers(questions: QuestionDefinition[], raw: Answers): Answers 
       continue;
     }
 
-    resolved[q.id] = value;
+    resolved[q.id] = normalizeAnswer(q, value);
   }
 
   if (issues.length > 0) throw new InvalidAnswersError(issues);

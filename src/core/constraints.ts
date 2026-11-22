@@ -15,8 +15,12 @@
  * Evaluation order (fixed, never author-configurable): `trim` (if set) ->
  * `minLength` -> `maxLength` -> `rules` in declared array order. The first
  * violated check's `message` wins. The trimmed value is what's measured and
- * matched against — the stored answer itself is never altered (mirrors
- * `toValidate(zod.trim())`'s existing semantics in `core/validation.ts`).
+ * matched against here; `compileConstraints()` itself stays pure and never
+ * mutates its input — it only ever reports a pass/fail verdict. `normalizeAnswer()`
+ * below is the sibling pure function that, for a question with `constraints.trim
+ * === true`, produces the same trimmed value for storage: `core/orchestrator.ts`'s
+ * `resolveAnswers()` calls it after validation succeeds, so the answer a plugin
+ * actually receives matches what was just validated.
  *
  * Length measurement (amends D1's text, grounded against the real
  * dependency rather than the spec's own paraphrase — SYNTH-002's own
@@ -42,7 +46,7 @@
  * only hang the validation of that author's own plugin; no sandbox or
  * timeout is added (accepted risk, documented in SK-ADR-010 Decision 7).
  */
-import type { ConstraintLimit, ConstraintRule, QuestionConstraints } from './types.js';
+import type { AnswerValue, ConstraintLimit, ConstraintRule, QuestionConstraints, QuestionDefinition } from './types.js';
 
 /** Fixed message for a non-string value — defense in depth; `QuestionDefinition.validate`'s contract is a text-question answer, which is always a string in practice. */
 const NON_STRING_MESSAGE = 'Expected a string';
@@ -78,6 +82,26 @@ export function compileConstraints(constraints: QuestionConstraints): (value: un
 
     return true;
   };
+}
+
+/**
+ * Produces the value `core/orchestrator.ts`'s `resolveAnswers()` should
+ * store (and ultimately hand to `buildBlueprint()`, hooks, and templates)
+ * for one resolved answer. Returns `value.trim()` only when all three hold:
+ * `question.type === 'input'`, `question.constraints?.trim === true`, and
+ * `typeof value === 'string'` — otherwise returns `value` unchanged (the
+ * exact same reference for a non-string/non-input/no-constraints answer,
+ * same value for a string already free of leading/trailing whitespace).
+ * Uses the same `String.prototype.trim()` definition of whitespace that
+ * `compileConstraints()` above already validates against, so a question's
+ * stored answer and the value its checks just ran against can never
+ * diverge. Pure, no I/O — same module-level guarantee as `compileConstraints()`.
+ */
+export function normalizeAnswer(question: QuestionDefinition, value: AnswerValue): AnswerValue {
+  if (question.type === 'input' && question.constraints?.trim === true && typeof value === 'string') {
+    return value.trim();
+  }
+  return value;
 }
 
 interface CompiledRule {
