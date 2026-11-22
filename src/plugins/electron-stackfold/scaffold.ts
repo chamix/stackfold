@@ -106,14 +106,16 @@ const WHEN_ABOUT_HELP = { var: 'includeAboutHelp' };
 export default defineScaffold({
   id: 'electron-stackfold',
   description:
-    'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge).',
+    'Alternative entry for electron-ts: generates the same Electron + TypeScript desktop app shell (sandboxed ' +
+    'windows, external-link policy, narrow preload bridge).',
   help: {
-    name: 'Electron + TypeScript (declarative)',
+    name: 'Electron + TypeScript (alternative)',
     details:
       'Generates an Electron shell: context isolation + a disabled Node integration ' +
       'renderer, a narrow typed preload bridge (no raw ipcRenderer exposure), and a policy that opens external ' +
       'links in the OS browser instead of a new Electron window. Settings (Dark Mode), Skins (user-editable ' +
-      'visual presets) and About/Help windows are optional, prompted during init. ' +
+      'visual presets) and About/Help windows are optional, prompted during init. electron-ts is the ' +
+      'recommended entry and generates the same project. ' +
       'Requires Node 22+ and enough disk/network for the Electron binary download on first `npm install`.',
   },
 

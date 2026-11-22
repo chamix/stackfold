@@ -169,8 +169,35 @@ describe('web-app-stackfold plugin — appType: "spa-react" (composed blueprint,
       '@types/react-dom': '^19.3.0',
       eslint: '^10.11.0',
       'typescript-eslint': '^8.70.1',
+      typescript: '^6.0.3',
     });
-    expect(pkg.scripts).toEqual({ dev: 'vite', build: 'vite build', test: 'vitest run' });
+    expect(pkg.scripts).toEqual({
+      dev: 'vite',
+      build: 'vite build',
+      typecheck: 'tsc --noEmit',
+      test: 'vitest run',
+      lint: 'eslint .',
+    });
+  });
+
+  it('package.json carries the description and the author the user typed', async () => {
+    const pkg = JSON.parse(await fileContent(ANSWERS, 'package.json'));
+    expect(pkg.description).toBe('A demo app');
+    expect(pkg.author).toBe('Ada Lovelace');
+  });
+
+  it('package.json omits author when none was given (the default), but keeps the description', async () => {
+    const pkg = JSON.parse(await fileContent(NO_AUTHOR, 'package.json'));
+    expect(pkg).not.toHaveProperty('author');
+    expect(pkg.description).toBe('A demo app');
+  });
+
+  it('package.json stays valid JSON, with the exact text, for a description and author full of quotes and backslashes', async () => {
+    const description = 'He said "hi" \\ and left';
+    const author = 'Ada "The Countess" \\ Lovelace';
+    const pkg = JSON.parse(await fileContent({ ...ANSWERS, description, author }, 'package.json'));
+    expect(pkg.description).toBe(description);
+    expect(pkg.author).toBe(author);
   });
 
   it('.gitignore carries node_modules/ and dist/ (append strategy, single contributor)', async () => {

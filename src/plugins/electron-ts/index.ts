@@ -24,7 +24,8 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
   return {
     id: 'electron-ts',
     description:
-      'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge).',
+      'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge). ' +
+      'Recommended for new projects; electron-stackfold generates the same project.',
     help: {
       name: 'Electron + TypeScript',
       details:
@@ -34,6 +35,7 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
         'the OS browser instead of a new Electron window. ' +
         'Settings (Dark Mode), Skins (user-editable visual presets) and ' +
         'About/Help windows are optional, prompted during init. ' +
+        'This is the recommended entry; electron-stackfold generates the same project. ' +
         'Requires Node 22+ and enough disk/network for the Electron binary ' +
         'download on first `npm install`.',
     },

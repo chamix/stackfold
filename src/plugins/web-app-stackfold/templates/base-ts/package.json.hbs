@@ -1,6 +1,11 @@
 {
   "name": "{{packageName}}",
   "version": "0.1.0",
-  "private": true,
-  "type": "module"
+  "description": "{{description}}",
+{{#if author}}  "author": "{{author}}",
+{{/if}}  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
 }

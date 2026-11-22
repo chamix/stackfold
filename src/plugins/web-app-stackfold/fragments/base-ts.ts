@@ -66,7 +66,12 @@ export interface BaseTsFragmentProps {
 export const baseTsFragment: FragmentFactory<BaseTsFragmentProps> = ({ when }): Fragment => ({
   questions: [],
   steps: [
-    file('package.json', PACKAGE_JSON_TEMPLATE, { strategy: 'json-merge', when }),
+    file('package.json', PACKAGE_JSON_TEMPLATE, {
+      strategy: 'json-merge',
+      when,
+      // `description` and `author` are free text interpolated into a JSON string literal.
+      jsonEscapeKeys: ['description', 'author'],
+    }),
     file('tsconfig.json', TSCONFIG_TEMPLATE, { when }),
     file('.gitignore', GITIGNORE_TEMPLATE, { strategy: 'append', when }),
     file('LICENSE', LICENSE_TEMPLATE, { when: { and: [when, WHEN_AUTHOR_PROVIDED] } }),

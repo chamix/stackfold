@@ -41,6 +41,12 @@ export interface InitCommandDependencies {
    * header comment).
    */
   opener: ProjectOpener;
+  /**
+   * Whether the terminal can show interactive prompts (a TTY on stdin). Optional:
+   * absent means "assume yes", which is what the unit tests with a fake prompter
+   * want. The composition root injects the real check.
+   */
+  canPrompt?: () => boolean;
 }
 
 /**
@@ -108,8 +114,7 @@ export async function runInit(
 
   const plugin = await registry.resolve(stack);
   if (!plugin) {
-    stderr(`stackfold init: unknown stack "${stack}".`);
-    await printAvailable(registry, stderr);
+    stderr(`stackfold init: unknown stack "${stack}". Run \`stackfold list\` to see the available stacks.`);
     return 1;
   }
 
@@ -126,6 +131,13 @@ export async function runInit(
       options?.answer ?? [],
       deps.cwd()
     );
+    if (nonInteractiveAnswers === undefined && deps.canPrompt?.() === false) {
+      stderr(
+        'stackfold init: no interactive terminal is available to ask the questions. ' +
+          `Pass the answers with --config <file> or --answer key=value (run \`stackfold info ${plugin.id}\` to see the question ids).`
+      );
+      return 1;
+    }
     const ports =
       nonInteractiveAnswers === undefined
         ? deps.ports

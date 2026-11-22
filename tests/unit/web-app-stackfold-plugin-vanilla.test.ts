@@ -143,11 +143,18 @@ describe('web-app-stackfold plugin — appType: "spa-vanilla" (composed blueprin
       '@testing-library/jest-dom': '^7.0.1', // framework-agnostic (vitest fragment) — not framework-specific testing-library
       eslint: '^10.11.0',
       'typescript-eslint': '^8.70.1',
+      typescript: '^6.0.3',
     });
     for (const key of Object.keys(pkg.devDependencies)) {
       expect(key).not.toMatch(/testing-library\/(react|vue)/);
     }
-    expect(pkg.scripts).toEqual({ dev: 'vite', build: 'vite build', test: 'vitest run' });
+    expect(pkg.scripts).toEqual({
+      dev: 'vite',
+      build: 'vite build',
+      typecheck: 'tsc --noEmit',
+      test: 'vitest run',
+      lint: 'eslint .',
+    });
   });
 
   it('postActions are git-init (base-ts) then npm-install (vite-vanilla), plain concatenation in fragment order', async () => {

@@ -91,8 +91,16 @@ describe('web-app-stackfold plugin — appType: "spa-vue" (composed blueprint)',
       '@testing-library/jest-dom': '^7.0.1',
       eslint: '^10.11.0',
       'typescript-eslint': '^8.70.1',
+      typescript: '^6.0.3',
+      'vue-tsc': '^3.3.14',
     });
-    expect(pkg.scripts).toEqual({ dev: 'vite', build: 'vite build', test: 'vitest run' });
+    expect(pkg.scripts).toEqual({
+      dev: 'vite',
+      build: 'vite build',
+      typecheck: 'vue-tsc --noEmit',
+      test: 'vitest run',
+      lint: 'eslint .',
+    });
   });
 
   it('postActions are git-init (base-ts) then npm-install (vite-vue), plain concatenation in fragment order', async () => {

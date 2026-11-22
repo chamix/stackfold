@@ -103,8 +103,12 @@
       "action": "writeFile",
       "params": {
         "path": "package.json",
-        "content": "{\n  \"name\": \"{{packageName}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
-        "strategy": "json-merge"
+        "content": "{\n  \"name\": \"{{packageName}}\",\n  \"version\": \"0.1.0\",\n  \"description\": \"{{description}}\",\n{{#if author}}  \"author\": \"{{author}}\",\n{{/if}}  \"private\": true,\n  \"type\": \"module\",\n  \"devDependencies\": {\n    \"typescript\": \"^6.0.3\"\n  }\n}\n",
+        "strategy": "json-merge",
+        "jsonEscapeKeys": [
+          "description",
+          "author"
+        ]
       },
       "when": {
         "!=": [
@@ -119,7 +123,7 @@
       "action": "writeFile",
       "params": {
         "path": "tsconfig.json",
-        "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"Bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\n    \"src/**/*.ts\",\n    \"src/**/*.tsx\",\n    \"vite.config.ts\"\n  ]\n}\n"
+        "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2023\",\n    \"lib\": [\n      \"ES2023\",\n      \"DOM\",\n      \"DOM.Iterable\"\n    ],\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"Bundler\",\n    \"jsx\": \"react-jsx\",\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"esModuleInterop\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"skipLibCheck\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\n    \"src/**/*.ts\",\n    \"src/**/*.tsx\",\n    \"src/**/*.vue\",\n    \"vite.config.ts\"\n  ]\n}\n"
       },
       "when": {
         "!=": [
@@ -186,7 +190,7 @@
       "action": "writeFile",
       "params": {
         "path": "package.json",
-        "content": "{\n  \"dependencies\": {\n    \"react\": \"^19.3.0\",\n    \"react-dom\": \"^19.3.0\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-react\": \"^6.1.2\",\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"@testing-library/react\": \"^16.3.3\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "content": "{\n  \"dependencies\": {\n    \"react\": \"^19.3.0\",\n    \"react-dom\": \"^19.3.0\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-react\": \"^6.1.2\",\n    \"@types/react\": \"^19.3.0\",\n    \"@types/react-dom\": \"^19.3.0\",\n    \"@testing-library/react\": \"^16.3.3\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"typecheck\": \"tsc --noEmit\"\n  }\n}\n",
         "strategy": "json-merge"
       },
       "when": {
@@ -330,7 +334,7 @@
       "action": "writeFile",
       "params": {
         "path": "package.json",
-        "content": "{\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "content": "{\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"typecheck\": \"tsc --noEmit\"\n  }\n}\n",
         "strategy": "json-merge"
       },
       "when": {
@@ -459,7 +463,7 @@
       "action": "writeFile",
       "params": {
         "path": "package.json",
-        "content": "{\n  \"dependencies\": {\n    \"vue\": \"^3.5.44\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-vue\": \"^6.0.10\",\n    \"@testing-library/vue\": \"^8.1.0\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n",
+        "content": "{\n  \"dependencies\": {\n    \"vue\": \"^3.5.44\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^8.3.4\",\n    \"@vitejs/plugin-vue\": \"^6.0.10\",\n    \"@testing-library/vue\": \"^8.1.0\",\n    \"vue-tsc\": \"^3.3.14\"\n  },\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"typecheck\": \"vue-tsc --noEmit\"\n  }\n}\n",
         "strategy": "json-merge"
       },
       "when": {
@@ -670,7 +674,7 @@
       "action": "writeFile",
       "params": {
         "path": "package.json",
-        "content": "{\n  \"devDependencies\": {\n    \"eslint\": \"^10.11.0\",\n    \"typescript-eslint\": \"^8.70.1\"\n  }\n}\n",
+        "content": "{\n  \"devDependencies\": {\n    \"eslint\": \"^10.11.0\",\n    \"typescript-eslint\": \"^8.70.1\"\n  },\n  \"scripts\": {\n    \"lint\": \"eslint .\"\n  }\n}\n",
         "strategy": "json-merge"
       },
       "when": {

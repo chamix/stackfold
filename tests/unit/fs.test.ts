@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { symlinkSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TargetNotEmptyError } from '../../src/core/ports.js';
 import { NodeFileRemover, NodeFileWriter } from '../../src/infra/fs.js';
@@ -251,6 +251,14 @@ describe('NodeFileRemover.removeDirIfEmpty — ARCH-004/SK-ADR-006 deletion inva
   it('rejects a call targeting root itself, even when root is empty (D4: targetDir is never removed)', async () => {
     await expect(remover.removeDirIfEmpty(root, root)).rejects.toThrow(/outside root/);
     expect((await stat(root)).isDirectory()).toBe(true);
+  });
+
+  it('rejects a call targeting root itself when root is a filesystem root (D4: the only case where root keeps its trailing separator)', async () => {
+    // `resolve()` strips a trailing separator everywhere except at a filesystem root
+    // ("/" or "C:\\"), so only there does `absolutePath === root` decide the outcome:
+    // the `startsWith` check on its own would accept it.
+    const fsRoot = parse(tmpdir()).root;
+    await expect(remover.removeDirIfEmpty(fsRoot, fsRoot)).rejects.toThrow(/outside root/);
   });
 
   it('rejects a directory that resolves outside root', async () => {
