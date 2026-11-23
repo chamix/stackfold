@@ -17,7 +17,7 @@ export function registerInfoCommand(program: Command, deps: InfoCommandDependenc
   program
     .command('info')
     .description("Show a stackfold plugin's detailed help")
-    .argument('<stack>', 'Plugin/stack id, e.g. "electron-ts"')
+    .argument('<stack>', 'Plugin/stack id, e.g. "electron-stackfold"')
     .action(async (stack: string) => {
       process.exitCode = await runInfo(stack, deps);
     });

@@ -58,7 +58,7 @@ export function registerInitCommand(program: Command, deps: InitCommandDependenc
   program
     .command('init')
     .description('Scaffold a new project from a stackfold plugin')
-    .argument('[stack]', 'Plugin/stack to use, e.g. "electron-ts"')
+    .argument('[stack]', 'Plugin/stack to use, e.g. "electron-stackfold"')
     .argument('[directory]', 'Target directory (must be empty or not exist yet)')
     .option('--force', 'scaffold into a non-empty directory anyway (existing files are still never overwritten)', false)
     .option('--config <path>', 'load non-interactive answers from a config file (json/yaml/js via cosmiconfig)')

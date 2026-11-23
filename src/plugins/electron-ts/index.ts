@@ -24,18 +24,18 @@ export function createElectronTsPlugin(options: ElectronTsPluginOptions = {}): S
   return {
     id: 'electron-ts',
     description:
-      'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge). ' +
-      'Recommended for new projects; electron-stackfold generates the same project.',
+      'Deprecated since 2.6.0, removal planned for 3.0.0 — use electron-stackfold (same output). ' +
+      'Electron + TypeScript desktop app shell (sandboxed windows, external-link policy, narrow preload bridge).',
     help: {
       name: 'Electron + TypeScript',
       details:
+        'Deprecated since 2.6.0, removal planned for 3.0.0 — use electron-stackfold (same output). ' +
         'Generates an Electron shell: context isolation + a disabled ' +
         'Node integration renderer, a narrow typed preload bridge (no raw ' +
         'ipcRenderer exposure), and a policy that opens external links in ' +
         'the OS browser instead of a new Electron window. ' +
         'Settings (Dark Mode), Skins (user-editable visual presets) and ' +
         'About/Help windows are optional, prompted during init. ' +
-        'This is the recommended entry; electron-stackfold generates the same project. ' +
         'Requires Node 22+ and enough disk/network for the Electron binary ' +
         'download on first `npm install`.',
     },
