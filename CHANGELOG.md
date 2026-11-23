@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-11-23
+
+### Deprecated
+
+- **`electron-ts` is deprecated** in favor of `electron-stackfold`, which generates
+  the same project. `electron-ts` keeps working and its output is unchanged, but
+  it is planned for removal in a future major release.
+  `stackfold list`, `stackfold info` and the README now say so. `stackfold init`
+  prints no warning.
+
+### Changed
+
+- **`constraints.trim` now stores the trimmed value**, not only validates it. With
+  `trim: true`, the answer a plugin receives (and renders into its files) has no
+  leading or trailing whitespace; before, the checks ran on the trimmed text but
+  the stored answer kept its padding. Answers without edge whitespace are
+  unchanged. Visible effects in the built-in plugins: a padded `pluginId` in
+  `plugin-scaffold` no longer fails in `init`'s post-write check, and a
+  whitespace-only author no longer produces a `LICENSE` with a blank holder.
+- `stackfold init` fails fast, with a message that names `--config` and `--answer`,
+  when there is no interactive terminal and no answers were given. The "unknown
+  stack" message now points to `stackfold list` instead of printing the list.
+- The optional intro of `web-app-stackfold` has its own styles, a short story
+  paragraph and links (React and Vue docs, the project's GitHub page). An
+  interactive `init` ends with a short closing message (skipped when stdout is
+  not a terminal). `stackfold list` and `stackfold info` text now describes what
+  each built-in plugin generates.
+- Generated `web-app-stackfold` projects now include `description` and `author`
+  in `package.json` (author only when provided), a `typecheck` script
+  (`vue-tsc` for Vue) with `typescript` as a dev dependency, and a `lint` script
+  when ESLint is included.
+- Compiled test files (`dist/**/*.test.*`) are no longer published in the npm
+  package.
+
+### Fixed
+
+- **`electron-stackfold` now validates `appName`, `description` and `author` the
+  same way `electron-ts` does** (for example, it rejects a name made only of
+  symbols) and escapes HTML in the generated renderer `index.html`.
+
 ## [2.5.0] - 2026-11-21
 
 ### Added
