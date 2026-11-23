@@ -11,7 +11,7 @@ npm install -g stackfold
 Or run it without installing, via `npx`:
 
 ```bash
-npx stackfold init electron-ts ./my-app
+npx stackfold init electron-stackfold ./my-app
 ```
 
 Requires Node.js **22+**.
@@ -28,8 +28,8 @@ Requires Node.js **22+**.
 
 ```bash
 stackfold list                     # see every available plugin
-stackfold info electron-ts         # inspect one plugin's questions/help
-stackfold init electron-ts ./my-app
+stackfold info electron-stackfold  # inspect one plugin's questions/help
+stackfold init electron-stackfold ./my-app
 ```
 
 ## Why
@@ -44,13 +44,15 @@ another plugin, not touching the core.
 
 Run `stackfold list` for the live, authoritative list. Currently:
 
-- **`electron-ts`** — Electron + TypeScript desktop app shell (sandboxed
-  windows, external-link policy, narrow preload bridge), with optional
-  Settings (Dark Mode), Skins, and About/Help features. Recommended for
+- **`electron-ts`** — Deprecated since 2.6.0, removal planned for 3.0.0 —
+  use `electron-stackfold` (same output). Electron + TypeScript desktop
+  app shell (sandboxed windows, external-link policy, narrow preload
+  bridge), with optional Settings (Dark Mode), Skins, and About/Help
+  features.
+- **`electron-stackfold`** — Electron + TypeScript desktop app shell
+  (sandboxed windows, external-link policy, narrow preload bridge);
+  successor of the deprecated `electron-ts`. The recommended entry for
   new projects.
-- **`electron-stackfold`** — generates the same project as `electron-ts`.
-  Both stay available side by side, and `stackfold` itself is init-only,
-  so there is no migration for either.
 - **`web-app-stackfold`** — a web app: a single, dependency-free
   standalone HTML file, or a Vite-powered SPA in React, Vue, or plain
   vanilla TS. One `appType` question selects the variant.
@@ -90,7 +92,7 @@ missing; must otherwise be empty, unless `--force` is given — existing
 files are still never overwritten).
 
 ```bash
-stackfold init electron-ts ./my-app
+stackfold init electron-stackfold ./my-app
 ```
 
 By default, `init` asks its questions interactively and, on success,
@@ -108,8 +110,8 @@ instead, e.g. while debugging a plugin's own `postWrite` hook.
 It also runs **non-interactively**, for scripts and CI:
 
 ```bash
-stackfold init electron-ts ./out --config config.json
-stackfold init electron-ts ./out --answer appName="CI Smoke Test" --answer includeSettings=false
+stackfold init electron-stackfold ./out --config config.json
+stackfold init electron-stackfold ./out --answer appName="CI Smoke Test" --answer includeSettings=false
 ```
 
 - `--config <path>` loads answers from a json/yaml/js file (via
@@ -123,7 +125,7 @@ stackfold init electron-ts ./out --answer appName="CI Smoke Test" --answer inclu
 
 ```bash
 stackfold list              # every available plugin (built-in + registered)
-stackfold info electron-ts  # one plugin's description, prerequisites, questions
+stackfold info electron-stackfold  # one plugin's description, prerequisites, questions
 ```
 
 A plugin's richer help (display name, details prose) is optional in the
@@ -311,11 +313,11 @@ This authoring system is how 5 of the 6 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
 `plugin-scaffold`, `node-http-api-stackfold`) are built today.
 `electron-ts` is hand-written instead,
-via the `questions()`/`buildBlueprint()` plugin contract directly. Both are
-kept side by side indefinitely — see [Built-in plugins](#built-in-plugins)
-above — and `stackfold` itself is init-only, so neither needs to migrate to
-the other. See the [CHANGELOG](./CHANGELOG.md) for the full release
-history.
+via the `questions()`/`buildBlueprint()` plugin contract directly — it's
+the last plugin built that way, and is now deprecated in favor of the
+declarative `electron-stackfold` (see [Built-in
+plugins](#built-in-plugins) above). See the
+[CHANGELOG](./CHANGELOG.md) for the full release history.
 
 ## Authoring a plugin without a repo checkout
 
@@ -849,7 +851,7 @@ plugin, only the one actually requested.
 
 ```bash
 npm install
-npm run dev -- init electron-ts ./tmp/out     # run the CLI without building
+npm run dev -- init electron-stackfold ./tmp/out     # run the CLI without building
 npm run dev -- list
 npm run build                                  # tsc -> dist/, then copies .hbs templates
 npm test                                       # vitest
