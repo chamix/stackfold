@@ -5,7 +5,25 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-11-23
+
+### Fixed
+
+- **The package published as 2.6.0 did not start.** 14 templates whose file names
+  contain `.test.` were left out of the npm package, so every command, including
+  `--version`, failed with `loadTemplate: template file not found`. 2.6.0 is
+  deprecated on npm; use 2.6.1 or later. Compiled test files are still not
+  published.
+
+### Changed
+
+- CI and the release workflow now install the packed tarball and run `--version`
+  and `list` from it before anything is published.
+
 ## [2.6.0] - 2026-11-23
+
+> **Do not use this version.** Its npm package is broken (the CLI fails at startup
+> because some templates are missing). Use 2.6.1 or later.
 
 ### Deprecated
 
