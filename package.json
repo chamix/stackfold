@@ -4,10 +4,13 @@
   "description": "Stack-agnostic scaffolding CLI with a plugin-based generator system.",
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.js.map",
+    "!dist/**/*.test.d.ts"
   ],
   "scripts": {
     "test": "vitest run",
+    "smoke:pack": "node scripts/smoke-pack.mjs",
     "build": "tsc -p tsconfig.json",
     "postbuild": "node scripts/copy-templates.mjs",
     "dev": "tsx src/cli/index.ts",
