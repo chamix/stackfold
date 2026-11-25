@@ -1,0 +1,58 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+// Guards the layering the README describes: cli/ -> core/ <- infra/.
+// core/ is the innermost layer and must not know about the others or about libraries.
+
+const SRC = join(import.meta.dirname, '../../src');
+
+/** Every way a module can name a dependency: `from '...'`, a bare `import '...'`, `import('...')` and `require('...')`. */
+const IMPORT_SPECIFIERS = [
+  /\bfrom\s+'([^']+)'/g,
+  /\bimport\s+'([^']+)'/g,
+  /\bimport\(\s*'([^']+)'\s*\)/g,
+  /\brequire\(\s*'([^']+)'\s*\)/g,
+];
+
+function importsOf(layer: string): Array<{ file: string; specifier: string }> {
+  const dir = join(SRC, layer);
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+    .flatMap((entry) => {
+      const path = join(entry.parentPath, entry.name);
+      const source = readFileSync(path, 'utf8');
+      const file = path.slice(SRC.length + 1).split('\\').join('/');
+      return IMPORT_SPECIFIERS.flatMap((pattern) =>
+        [...source.matchAll(pattern)].map((match) => ({ file, specifier: match[1] as string })),
+      );
+    });
+}
+
+describe('layering', () => {
+  it('finds the imports it is supposed to check', () => {
+    expect(importsOf('core').length).toBeGreaterThan(0);
+    expect(importsOf('cli').length).toBeGreaterThan(0);
+    expect(importsOf('infra').length).toBeGreaterThan(0);
+  });
+
+  it('keeps core/ free of cli/, infra/ and every package except zod', () => {
+    for (const { file, specifier } of importsOf('core')) {
+      const isSiblingInCore = /^\.\/[A-Za-z]+\.js$/.test(specifier);
+      expect(isSiblingInCore || specifier === 'zod', `${file} imports ${specifier}`).toBe(true);
+    }
+  });
+
+  it('keeps infra/ from importing cli/', () => {
+    for (const { file, specifier } of importsOf('infra')) {
+      expect(specifier.includes('/cli/'), `${file} imports ${specifier}`).toBe(false);
+    }
+  });
+
+  it('lets only the composition root import infra/', () => {
+    for (const { file, specifier } of importsOf('cli')) {
+      if (file === 'cli/index.ts') continue;
+      expect(specifier.includes('/infra/'), `${file} imports ${specifier}`).toBe(false);
+    }
+  });
+});

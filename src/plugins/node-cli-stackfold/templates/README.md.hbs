@@ -1,0 +1,115 @@
+# {{{projectName}}}
+
+{{{description}}}
+
+## Requirements
+
+- Node.js 22.18.0 or later.
+
+## Install
+
+Build the project and install the command globally:
+
+```bash
+npm install
+npm run build
+npm install -g .
+{{{binName}}} --help
+```
+
+To try it without installing it globally, run `npm start -- greet World` after `npm run build`.
+
+## Usage
+
+### greet
+
+```bash
+{{{binName}}} greet [name] [--times <n>] [--shout]
+```
+
+Prints `<greeting>, <name>!`. When `name` is omitted in an interactive terminal, the command asks for it. When no terminal is attached, a missing `name` is an error.
+
+- `--times <n>` prints the greeting `n` times. `n` must be a positive integer.
+- `--shout` prints the greeting in upper case.
+
+```bash
+{{{binName}}} greet World --times 2 --shout
+# HELLO, WORLD!
+# HELLO, WORLD!
+```
+
+### doctor
+
+```bash
+{{{binName}}} doctor
+```
+
+Runs `node --version` and prints the result, for example `node: v22.18.0`. It fails with a non-zero exit code when `node` cannot be run.
+
+### Errors and debugging
+
+Errors raised by the CLI are printed to stderr as `Error: <message>` and the command exits with a non-zero code. Usage errors reported by the argument parser (for example `--times 0`) use the parser's own `error: ...` format instead. Set `DEBUG=1` to print the stack trace as well:
+
+```bash
+DEBUG=1 {{{binName}}} greet World
+```
+
+## Configuration
+
+`greet` reads its defaults from a configuration file. The search starts in the current directory and climbs through the parent directories until it reaches the first directory that contains a `package.json`, which is the last one searched. In each directory it looks for these files, in this order:
+
+- `.{{{binName}}}rc`
+- `.{{{binName}}}rc.json`
+- `{{{binName}}}.config.json`
+
+The file holds a JSON object. Every key is optional:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `greeting` | string | `"Hello"` | The word that starts the greeting. |
+| `times` | positive integer | `1` | How many times to print the greeting. |
+| `shout` | boolean | `false` | Print the greeting in upper case. |
+
+```json
+{ "greeting": "Howdy", "times": 2 }
+```
+
+A command-line flag overrides the same setting in the file. An invalid value, or a key that is not listed above, stops the command with an error that names the file and the key.
+
+## Development
+
+```bash
+npm install
+npm run build       # compile src/ to dist/
+npm run typecheck   # type-check without emitting files
+npm test            # unit tests, then the integration tests against the built binary
+npm start -- greet World
+```
+
+`npm test` compiles the project before it runs the integration tests, so it works on a fresh clone.
+
+## Project structure
+
+```text
+{{{projectName}}}/
+  package.json
+  tsconfig.json
+  vitest.config.ts
+  src/
+    cli/
+      index.ts              composition root: creates the adapters and wires the commands
+      commands/greet.ts     the greet command
+      commands/doctor.ts    the doctor command
+    core/
+      ports.ts              interfaces: Prompter, ProcessRunner, ConfigStore
+      config.ts             the configuration schema and its defaults
+    infra/
+      prompter.ts           Prompter over @inquirer/prompts
+      processRunner.ts      ProcessRunner over execa
+      configStore.ts        ConfigStore over cosmiconfig
+  tests/
+    unit/                   commands and core, with in-memory fakes of the ports
+    integration/cli.test.ts the built binary with the real adapters
+```
+
+Dependencies point inward: `cli/` and `infra/` depend on `core/`, and `core/` imports nothing from them and no package except `zod`. Commands receive their ports as arguments, so tests replace the adapters with fakes. `tests/unit/architecture.test.ts` checks these rules.

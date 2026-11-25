@@ -1,0 +1,64 @@
+import { InvalidArgumentError, type Command } from 'commander';
+import { parseConfig } from '../../core/config.js';
+import type { ConfigStore, Prompter } from '../../core/ports.js';
+
+export interface GreetDependencies {
+  prompter: Prompter;
+  configStore: ConfigStore;
+  /** Whether a person can answer a prompt (an interactive terminal is attached). */
+  canPrompt: () => boolean;
+  cwd: () => string;
+  stdout: (line: string) => void;
+}
+
+export interface GreetOptions {
+  times?: number;
+  shout?: boolean;
+}
+
+/** Parses `--times`: a positive integer written in plain digits. */
+export function parseTimes(value: string): number {
+  const parsed = Number(value);
+  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(parsed)) {
+    throw new InvalidArgumentError('Must be a positive integer.');
+  }
+  return parsed;
+}
+
+export function registerGreetCommand(program: Command, deps: GreetDependencies): void {
+  program
+    .command('greet')
+    .description('Print a greeting')
+    .argument('[name]', 'who to greet (asked interactively when omitted)')
+    .option('--times <n>', 'repeat the greeting n times (a positive integer; default 1)', parseTimes)
+    .option('--shout', 'print the greeting in upper case')
+    .action(async (name: string | undefined, options: GreetOptions) => {
+      await runGreet(name, options, deps);
+    });
+}
+
+/**
+ * Settings resolve in this order: a command-line flag, then the configuration
+ * file, then the built-in default. The configuration is read first so an
+ * invalid file is reported before the user is asked anything.
+ */
+export async function runGreet(nameArg: string | undefined, options: GreetOptions, deps: GreetDependencies): Promise<void> {
+  const loaded = await deps.configStore.load(deps.cwd());
+  const config = parseConfig(loaded?.config, loaded?.filepath);
+
+  const name = (nameArg ?? (await askForName(deps))).trim();
+  if (name === '') throw new Error('The name must not be empty.');
+
+  const times = options.times ?? config.times;
+  const shout = options.shout ?? config.shout;
+  const greeting = `${config.greeting}, ${name}!`;
+  const line = shout ? greeting.toUpperCase() : greeting;
+  for (let i = 0; i < times; i += 1) deps.stdout(line);
+}
+
+async function askForName(deps: GreetDependencies): Promise<string> {
+  if (!deps.canPrompt()) {
+    throw new Error('Missing name: pass it as an argument (there is no interactive terminal to ask for it).');
+  }
+  return deps.prompter.ask('Who should I greet?');
+}

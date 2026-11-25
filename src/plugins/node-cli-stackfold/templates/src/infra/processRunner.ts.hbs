@@ -1,0 +1,16 @@
+/**
+ * Process-execution adapter: implements the `ProcessRunner` port over execa.
+ *
+ * Security: the command and its arguments are passed to execa as separate
+ * values and never through a shell, so an argument is never parsed as shell
+ * syntax. Do not add `shell: true` or build a command line from user input.
+ */
+import { execa } from 'execa';
+import type { ProcessRunner } from '../core/ports.js';
+
+export class ExecaProcessRunner implements ProcessRunner {
+  async run(command: string, args: string[]): Promise<string> {
+    const { stdout } = await execa(command, args);
+    return stdout;
+  }
+}

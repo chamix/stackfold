@@ -1,0 +1,27 @@
+import type { Command } from 'commander';
+import type { ProcessRunner } from '../../core/ports.js';
+
+export interface DoctorDependencies {
+  processRunner: ProcessRunner;
+  stdout: (line: string) => void;
+}
+
+export function registerDoctorCommand(program: Command, deps: DoctorDependencies): void {
+  program
+    .command('doctor')
+    .description('Check the environment: print the Node.js version')
+    .action(async () => {
+      await runDoctor(deps);
+    });
+}
+
+export async function runDoctor(deps: DoctorDependencies): Promise<void> {
+  let version: string;
+  try {
+    version = await deps.processRunner.run('node', ['--version']);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Could not run "node --version": ${reason}`, { cause });
+  }
+  deps.stdout(`node: ${version.trim()}`);
+}

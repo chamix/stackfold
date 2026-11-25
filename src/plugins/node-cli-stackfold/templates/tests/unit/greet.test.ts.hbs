@@ -1,0 +1,200 @@
+import { Command, CommanderError } from 'commander';
+import { describe, expect, it } from 'vitest';
+import { parseTimes, registerGreetCommand } from '../../src/cli/commands/greet.js';
+import { ConfigError } from '../../src/core/config.js';
+import type { ConfigStore, LoadedConfig, Prompter } from '../../src/core/ports.js';
+
+// The ports are replaced by in-memory fakes, so these tests cover the command
+// logic only. The real adapters run in tests/integration/cli.test.ts.
+
+interface Harness {
+  stdout: string[];
+  stderr: string[];
+  prompts: string[];
+  searched: string[];
+  run: (args: string[]) => Promise<void>;
+}
+
+function harness(options: { config?: LoadedConfig; answer?: string; canPrompt?: boolean } = {}): Harness {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const prompts: string[] = [];
+  const searched: string[] = [];
+
+  const prompter: Prompter = {
+    ask: async (message) => {
+      prompts.push(message);
+      return options.answer ?? '';
+    },
+  };
+  const configStore: ConfigStore = {
+    load: async (searchFrom) => {
+      searched.push(searchFrom);
+      return options.config;
+    },
+  };
+
+  const run = async (args: string[]): Promise<void> => {
+    const program = new Command();
+    program.exitOverride();
+    program.configureOutput({ writeOut: () => {}, writeErr: (text) => stderr.push(text) });
+    registerGreetCommand(program, {
+      prompter,
+      configStore,
+      canPrompt: () => options.canPrompt ?? false,
+      cwd: () => '/work/dir',
+      stdout: (line) => stdout.push(line),
+    });
+    await program.parseAsync(['greet', ...args], { from: 'user' });
+  };
+
+  return { stdout, stderr, prompts, searched, run };
+}
+
+const withConfig = (config: unknown): LoadedConfig => ({ filepath: '/work/.{{{binName}}}rc', config });
+
+describe('greet', () => {
+  it('greets the given name with the default greeting', async () => {
+    const h = harness();
+    await h.run(['World']);
+    expect(h.stdout).toEqual(['Hello, World!']);
+  });
+
+  it('searches for the configuration from the current directory', async () => {
+    const h = harness();
+    await h.run(['World']);
+    expect(h.searched).toEqual(['/work/dir']);
+  });
+
+  describe('--times', () => {
+    it('repeats the greeting that many times', async () => {
+      const h = harness();
+      await h.run(['World', '--times', '3']);
+      expect(h.stdout).toEqual(['Hello, World!', 'Hello, World!', 'Hello, World!']);
+    });
+
+    it.each(['0', '-1', '1.5', 'abc', '', '2x', '1e3', '99999999999999999999'])(
+      'rejects %j with a usage error and prints nothing',
+      async (value) => {
+        const h = harness();
+        const failure = await h.run(['World', '--times', value]).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(failure).toBeInstanceOf(CommanderError);
+        expect((failure as CommanderError).code).toBe('commander.invalidArgument');
+        expect(h.stderr.join('')).toContain('positive integer');
+        expect(h.stdout).toEqual([]);
+      },
+    );
+  });
+
+  describe('parseTimes', () => {
+    it('returns the number for plain positive integers', () => {
+      expect(parseTimes('1')).toBe(1);
+      expect(parseTimes('42')).toBe(42);
+    });
+
+    it('throws for anything else', () => {
+      for (const value of ['0', '01', '+1', ' 1', '1 ', '-3', '2.0', 'NaN', 'Infinity']) {
+        expect(() => parseTimes(value), value).toThrow('positive integer');
+      }
+    });
+  });
+
+  describe('--shout', () => {
+    it('prints the greeting in upper case', async () => {
+      const h = harness();
+      await h.run(['World', '--shout']);
+      expect(h.stdout).toEqual(['HELLO, WORLD!']);
+    });
+
+    it('does not change the case without the flag', async () => {
+      const h = harness();
+      await h.run(['World']);
+      expect(h.stdout).toEqual(['Hello, World!']);
+    });
+  });
+
+  describe('configuration', () => {
+    it('uses the configured greeting', async () => {
+      const h = harness({ config: withConfig({ greeting: 'Howdy' }) });
+      await h.run(['World']);
+      expect(h.stdout).toEqual(['Howdy, World!']);
+    });
+
+    it('uses the configured times and shout when no flag is given', async () => {
+      const h = harness({ config: withConfig({ times: 2, shout: true }) });
+      await h.run(['World']);
+      expect(h.stdout).toEqual(['HELLO, WORLD!', 'HELLO, WORLD!']);
+    });
+
+    it('lets --times override the configured times, in both directions', async () => {
+      const fewer = harness({ config: withConfig({ times: 5 }) });
+      await fewer.run(['World', '--times', '2']);
+      expect(fewer.stdout).toHaveLength(2);
+
+      const more = harness({ config: withConfig({ times: 2 }) });
+      await more.run(['World', '--times', '4']);
+      expect(more.stdout).toHaveLength(4);
+    });
+
+    it('lets --shout apply when the configuration says shout is off', async () => {
+      const h = harness({ config: withConfig({ shout: false }) });
+      await h.run(['World', '--shout']);
+      expect(h.stdout).toEqual(['HELLO, WORLD!']);
+    });
+
+    it('fails with a clear error naming the file when the configuration is invalid', async () => {
+      const h = harness({ config: withConfig({ times: 0 }) });
+      const failure = await h.run(['World']).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(ConfigError);
+      expect((failure as Error).message).toContain('/work/.{{{binName}}}rc');
+      expect((failure as Error).message).toContain('times');
+      expect(h.stdout).toEqual([]);
+    });
+
+    it('reports an invalid configuration before asking for a missing name', async () => {
+      const h = harness({ config: withConfig({ shout: 'yes' }), canPrompt: true, answer: 'Ada' });
+      await expect(h.run([])).rejects.toBeInstanceOf(ConfigError);
+      expect(h.prompts).toEqual([]);
+    });
+  });
+
+  describe('a missing name', () => {
+    it('is asked for when a terminal is available', async () => {
+      const h = harness({ canPrompt: true, answer: '  Ada  ' });
+      await h.run([]);
+      expect(h.prompts).toEqual(['Who should I greet?']);
+      expect(h.stdout).toEqual(['Hello, Ada!']);
+    });
+
+    it('is an error when no terminal is available, and nothing is asked', async () => {
+      const h = harness({ canPrompt: false, answer: 'Ada' });
+      await expect(h.run([])).rejects.toThrow('Missing name');
+      expect(h.prompts).toEqual([]);
+      expect(h.stdout).toEqual([]);
+    });
+
+    it('is an error when the answer is blank', async () => {
+      const h = harness({ canPrompt: true, answer: '   ' });
+      await expect(h.run([])).rejects.toThrow('must not be empty');
+      expect(h.stdout).toEqual([]);
+    });
+
+    it('is not asked for when the name is given', async () => {
+      const h = harness({ canPrompt: true, answer: 'Ada' });
+      await h.run(['World']);
+      expect(h.prompts).toEqual([]);
+    });
+
+    it('rejects a blank name given as an argument', async () => {
+      const h = harness({ canPrompt: true, answer: 'Ada' });
+      await expect(h.run(['  '])).rejects.toThrow('must not be empty');
+      expect(h.prompts).toEqual([]);
+    });
+  });
+});

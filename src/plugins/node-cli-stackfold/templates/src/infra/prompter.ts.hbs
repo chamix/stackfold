@@ -1,0 +1,20 @@
+/**
+ * Interactive-prompt adapter: implements the `Prompter` port over
+ * @inquirer/prompts. The only place that knows about a prompting library.
+ */
+import { input } from '@inquirer/prompts';
+import type { Prompter } from '../core/ports.js';
+
+/** Streams the prompt reads from and writes to. Defaults to the process terminal; tests pass their own. */
+export interface PromptContext {
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream;
+}
+
+export class InquirerPrompter implements Prompter {
+  constructor(private readonly context: PromptContext = {}) {}
+
+  async ask(message: string): Promise<string> {
+    return input({ message }, this.context);
+  }
+}

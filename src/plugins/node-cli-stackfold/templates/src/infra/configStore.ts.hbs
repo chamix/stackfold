@@ -1,0 +1,29 @@
+/**
+ * Configuration adapter: implements the `ConfigStore` port over cosmiconfig.
+ *
+ * `searchStrategy: 'project'` is set explicitly because it is what makes the
+ * search climb: from the starting directory upward until the first directory
+ * that contains a `package.json` (inclusive). cosmiconfig 10 changed the
+ * default to `'none'`, which would only look in the starting directory.
+ * `searchPlaces` lists the file names this tool reads; a `package.json` is
+ * deliberately not one of them.
+ */
+import { cosmiconfig } from 'cosmiconfig';
+import type { ConfigStore, LoadedConfig } from '../core/ports.js';
+
+export class CosmiconfigConfigStore implements ConfigStore {
+  private readonly explorer;
+
+  constructor(moduleName: string) {
+    this.explorer = cosmiconfig(moduleName, {
+      searchStrategy: 'project',
+      searchPlaces: [`.${moduleName}rc`, `.${moduleName}rc.json`, `${moduleName}.config.json`],
+    });
+  }
+
+  async load(searchFrom: string): Promise<LoadedConfig | undefined> {
+    const result = await this.explorer.search(searchFrom);
+    if (result === null || result.isEmpty === true) return undefined;
+    return { filepath: result.filepath, config: result.config };
+  }
+}
