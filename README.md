@@ -68,6 +68,13 @@ Run `stackfold list` for the live, authoritative list. Currently:
   is enabled, the generated `Dockerfile` uses `npm ci` if a
   `package-lock.json` is present and `npm install` otherwise, in both its
   build and runtime stages.
+- **`node-cli-stackfold`** (display name "Node CLI") — a Node.js +
+  TypeScript command-line app with the same opinionated stack and layered
+  structure as stackfold: `commander`, `@inquirer/prompts`, `execa`,
+  `cosmiconfig`, and `zod`, wired as ports and adapters
+  (`cli` → `core` ← `infra`), with unit tests on in-memory fakes and an
+  integration test that runs the built binary. See [Node CLI
+  plugin](#node-cli-plugin) below.
 - **`plugin-builder`** — stackfold's own self-extension tool: scaffolds a
   brand-new *built-in* plugin (as a TS `scaffold.ts` + synth) and patches
   it straight into stackfold's own plugin registry. Only useful from a
@@ -82,6 +89,67 @@ Run `stackfold list` for the live, authoritative list. Currently:
 Beyond the built-ins, you can register your own plugins without
 touching stackfold's source — see
 [External plugins](#external-plugins) below.
+
+### Node CLI plugin
+
+```bash
+stackfold init node-cli-stackfold ./my-cli
+```
+
+Questions, in order:
+
+| Question      | Default               | Constraints                                              |
+| ------------- | --------------------- | -------------------------------------------------------- |
+| `projectName` | `my-cli`              | `^[a-z0-9][a-z0-9_-]{0,213}$`                            |
+| `description` | `A command-line tool` | At most 200 characters, single line                      |
+| `binName`     | `my-cli`              | `^[a-z0-9][a-z0-9-]{0,213}$`; the command users type     |
+| `author`      | empty                 | Optional, at most 150 characters, single line; an empty value is omitted from `package.json` |
+
+The file tree is the same for every set of answers (18 files):
+
+```text
+package.json  tsconfig.json  vitest.config.ts  .gitignore  README.md
+src/cli/index.ts
+src/cli/commands/greet.ts  doctor.ts
+src/core/ports.ts  config.ts
+src/infra/prompter.ts  processRunner.ts  configStore.ts
+tests/unit/greet.test.ts  doctor.test.ts  config.test.ts  architecture.test.ts
+tests/integration/cli.test.ts
+```
+
+Build, test, and install the generated CLI:
+
+```bash
+cd my-cli
+npm install
+npm run build
+npm test
+npm install -g .      # or: npm pack
+```
+
+The generated project requires Node.js `>=22.18.0` and defines the
+scripts `build`, `typecheck`, `test`, `start`, and `prepack`. It ships two
+sample commands:
+
+- `<bin> greet [name] [--times <n>] [--shout]` — `--times` takes a
+  positive integer. When `name` is missing, the CLI prompts for it only
+  in a TTY and otherwise exits with an error.
+- `<bin> doctor` — prints `node: v<version>`.
+
+Errors raised by the CLI go to stderr as `Error: <message>` with exit code 1;
+usage errors reported by the argument parser (for example `--times 0`) use the
+parser's own `error: ...` format instead. Set `DEBUG=1` to add the stack trace.
+
+The CLI reads a config file, searched upward from the current directory
+and stopping at the first directory that has a `package.json`. Accepted
+names are `.<bin>rc`, `.<bin>rc.json`, and `<bin>.config.json`. Keys:
+
+- `greeting` — default `"Hello"`.
+- `times` — default `1`.
+- `shout` — default `false`.
+
+Command-line flags override the file. Unknown keys and invalid values are
+errors.
 
 ## Usage
 
@@ -309,9 +377,10 @@ both are importable from `stackfold/authoring`; see [Composing fragments
 from an external plugin](#composing-fragments-from-an-external-plugin)
 below.
 
-This authoring system is how 5 of the 6 built-in plugins
+This authoring system is how 6 of the 7 built-in plugins
 (`electron-stackfold`, `web-app-stackfold`, `plugin-builder`,
-`plugin-scaffold`, `node-http-api-stackfold`) are built today.
+`plugin-scaffold`, `node-http-api-stackfold`, `node-cli-stackfold`) are
+built today.
 `electron-ts` is hand-written instead,
 via the `questions()`/`buildBlueprint()` plugin contract directly — it's
 the last plugin built that way, and is now deprecated in favor of the
@@ -815,8 +884,8 @@ src/
               compiler (authoring.ts), validation
   plugins/    one folder per built-in stack (electron-ts,
               electron-stackfold, web-app-stackfold, plugin-builder,
-              plugin-scaffold, node-http-api-stackfold), each implementing
-              the plugin contract
+              plugin-scaffold, node-http-api-stackfold,
+              node-cli-stackfold), each implementing the plugin contract
   infra/      adapters: file system, git/process execution (execa),
               prompts (@inquirer), the composite + dynamic plugin
               registries, expression evaluation (json-logic-js)

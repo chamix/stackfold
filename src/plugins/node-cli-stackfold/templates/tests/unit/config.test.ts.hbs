@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+import { ConfigError, DEFAULT_GREETING, parseConfig } from '../../src/core/config.js';
+
+describe('parseConfig', () => {
+  it('returns the defaults when there is no configuration', () => {
+    expect(parseConfig(undefined)).toEqual({ greeting: DEFAULT_GREETING, times: 1, shout: false });
+    expect(DEFAULT_GREETING).toBe('Hello');
+  });
+
+  it('fills in the defaults for the keys that are missing', () => {
+    expect(parseConfig({ times: 3 })).toEqual({ greeting: 'Hello', times: 3, shout: false });
+  });
+
+  it('keeps every value it is given', () => {
+    expect(parseConfig({ greeting: 'Howdy', times: 2, shout: true })).toEqual({ greeting: 'Howdy', times: 2, shout: true });
+  });
+
+  it.each([
+    ['an unknown key', { colour: 'red' }, 'colour'],
+    ['a non-string greeting', { greeting: 5 }, 'greeting'],
+    ['a blank greeting', { greeting: '   ' }, 'greeting'],
+    ['zero times', { times: 0 }, 'times'],
+    ['negative times', { times: -2 }, 'times'],
+    ['fractional times', { times: 1.5 }, 'times'],
+    ['times as text', { times: '2' }, 'times'],
+    ['a non-boolean shout', { shout: 'yes' }, 'shout'],
+    ['a non-object value', 'greeting', '(root)'],
+    ['an array', [], '(root)'],
+  ])('rejects %s with a ConfigError that names the offending key', (_label, raw, key) => {
+    expect(() => parseConfig(raw)).toThrow(ConfigError);
+    expect(() => parseConfig(raw)).toThrow(key);
+  });
+
+  it('names the file in the error when the source is known', () => {
+    expect(() => parseConfig({ times: 0 }, '/work/project/.{{{binName}}}rc')).toThrow(
+      'Invalid configuration in /work/project/.{{{binName}}}rc: times:',
+    );
+  });
+
+  it('omits the file from the error when the source is unknown', () => {
+    expect(() => parseConfig({ times: 0 })).toThrow(/^Invalid configuration: times:/);
+  });
+
+  it('reports every problem at once', () => {
+    expect(() => parseConfig({ times: 0, shout: 'yes' })).toThrow(/times:.*shout:/);
+  });
+
+  it('names the error class', () => {
+    expect(new ConfigError('x').name).toBe('ConfigError');
+  });
+});

@@ -69,6 +69,13 @@ const staticRegistry = new StaticPluginRegistry([
       .default as ScaffoldDefinition,
     expressionEvaluator
   ),
+  // node-cli-stackfold — declarative `constraints` only, no `validate`
+  // closures, so it also compiles from its synthesized `scaffold.json`.
+  compileScaffold(
+    (await import('../plugins/node-cli-stackfold/scaffold.json', { with: { type: 'json' } }))
+      .default as ScaffoldDefinition,
+    expressionEvaluator
+  ),
   // stackfold-plugin-registry:end
 ]);
 

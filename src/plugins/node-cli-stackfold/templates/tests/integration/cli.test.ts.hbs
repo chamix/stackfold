@@ -1,0 +1,201 @@
+import { execa } from 'execa';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { InquirerPrompter } from '../../src/infra/prompter.js';
+
+// These tests run the compiled binary with the real adapters (execa, cosmiconfig)
+// and no fakes. They compile the project first so `npm test` works on a fresh clone.
+
+const ROOT = join(import.meta.dirname, '../..');
+const BIN = join(ROOT, 'dist/cli/index.js');
+const TSC = join(ROOT, 'node_modules/typescript/bin/tsc');
+const RC_FILE = '.{{{binName}}}rc';
+
+/** Temporary directory trees; each test builds its own, with an explicit package.json as the search boundary. */
+const roots: string[] = [];
+
+function makeRoot(): string {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cli-test-')));
+  roots.push(root);
+  return root;
+}
+
+function write(path: string, content: string): void {
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, content);
+}
+
+/** A project directory (it has a package.json, which stops the configuration search) with an optional config file. */
+function makeProject(config?: string): string {
+  const root = makeRoot();
+  write(join(root, 'package.json'), '{}');
+  if (config !== undefined) write(join(root, RC_FILE), config);
+  return root;
+}
+
+interface Result {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+async function runCli(args: string[], options: { cwd: string; debug?: boolean; env?: Record<string, string> }): Promise<Result> {
+  const { exitCode, stdout, stderr } = await execa(process.execPath, [BIN, ...args], {
+    cwd: options.cwd,
+    reject: false,
+    env: { DEBUG: options.debug ? '1' : '', ...options.env },
+  });
+  return { exitCode: exitCode ?? -1, stdout, stderr };
+}
+
+beforeAll(async () => {
+  await execa(process.execPath, [TSC, '-p', 'tsconfig.json'], { cwd: ROOT });
+});
+
+afterAll(async () => {
+  for (const root of roots) {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+describe('greet (built binary)', () => {
+  it('prints the greeting', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: makeProject() });
+    expect(result).toMatchObject({ exitCode: 0, stdout: 'Hello, World!', stderr: '' });
+  });
+
+  it('honours --times and --shout', async () => {
+    const result = await runCli(['greet', 'World', '--times', '2', '--shout'], { cwd: makeProject() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('HELLO, WORLD!\nHELLO, WORLD!');
+  });
+
+  it('rejects an invalid --times on stderr with a non-zero exit code', async () => {
+    const result = await runCli(['greet', 'World', '--times', '0'], { cwd: makeProject() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('positive integer');
+  });
+
+  it('asks for the name only on a terminal: with none attached it fails on stderr', async () => {
+    const result = await runCli(['greet'], { cwd: makeProject() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Missing name');
+  });
+
+  it('reports --version and --help', async () => {
+    const cwd = makeProject();
+    expect((await runCli(['--version'], { cwd })).stdout).toMatch(/^\d+\.\d+\.\d+/);
+    const help = await runCli(['--help'], { cwd });
+    expect(help.stdout).toContain('greet');
+    expect(help.stdout).toContain('doctor');
+  });
+});
+
+describe('configuration (real cosmiconfig)', () => {
+  it('is read from the current directory', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: makeProject('{ "greeting": "Hi" }') });
+    expect(result.stdout).toBe('Hi, World!');
+  });
+
+  it('is found by searching upward from a subdirectory', async () => {
+    const project = makeProject('{ "greeting": "Hi" }');
+    const nested = join(project, 'a', 'b');
+    mkdirSync(nested, { recursive: true });
+    const result = await runCli(['greet', 'World'], { cwd: nested });
+    expect(result.stdout).toBe('Hi, World!');
+  });
+
+  it('is also read from {{{binName}}}.config.json', async () => {
+    const project = makeProject();
+    write(join(project, '{{{binName}}}.config.json'), '{ "greeting": "Yo" }');
+    const result = await runCli(['greet', 'World'], { cwd: project });
+    expect(result.stdout).toBe('Yo, World!');
+  });
+
+  it('stops searching at the first directory that has a package.json', async () => {
+    const outer = makeRoot();
+    write(join(outer, RC_FILE), '{ "greeting": "Outer" }');
+    const inner = join(outer, 'inner');
+    write(join(inner, 'package.json'), '{}');
+    const result = await runCli(['greet', 'World'], { cwd: inner });
+    expect(result.stdout).toBe('Hello, World!');
+  });
+
+  it('is overridden by command-line flags', async () => {
+    const project = makeProject('{ "times": 3 }');
+    expect((await runCli(['greet', 'World'], { cwd: project })).stdout.split('\n')).toHaveLength(3);
+    expect((await runCli(['greet', 'World', '--times', '2'], { cwd: project })).stdout.split('\n')).toHaveLength(2);
+  });
+
+  it('fails with a clear error when a value is invalid', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: makeProject('{ "times": 0 }') });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Invalid configuration');
+    expect(result.stderr).toContain(RC_FILE);
+    expect(result.stderr).toContain('times');
+  });
+
+  it('fails with a clear error when the file cannot be parsed', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: makeProject('{ not valid') });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(RC_FILE);
+  });
+});
+
+describe('error output (DEBUG)', () => {
+  const failing = () => makeProject('{ "times": 0 }');
+
+  it('prints only the message by default', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: failing() });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^Error: Invalid configuration/);
+    expect(result.stderr).not.toMatch(/\n\s+at /);
+  });
+
+  it('adds the stack trace with DEBUG=1', async () => {
+    const result = await runCli(['greet', 'World'], { cwd: failing(), debug: true });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^Error: Invalid configuration/);
+    expect(result.stderr).toMatch(/\n\s+at /);
+  });
+});
+
+describe('doctor (real execa)', () => {
+  it('prints the Node.js version reported by the real process', async () => {
+    const result = await runCli(['doctor'], { cwd: makeProject() });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/^node: v\d+\.\d+\.\d+/);
+  });
+
+  // Windows resolves executables through more than PATH, so an empty PATH is not a reliable way to make `node` unavailable there.
+  it.skipIf(process.platform === 'win32')('fails on stderr with a non-zero exit code when `node` cannot be run', async () => {
+    const emptyDir = makeRoot();
+    const result = await execa(process.execPath, [BIN, 'doctor'], {
+      cwd: emptyDir,
+      reject: false,
+      extendEnv: false,
+      env: { PATH: emptyDir },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Could not run "node --version"');
+  });
+});
+
+describe('InquirerPrompter (real @inquirer/prompts, scripted input stream)', () => {
+  it('returns what the user types', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const prompter = new InquirerPrompter({ input, output });
+    const answer = prompter.ask('Who should I greet?');
+    input.write('Ada\n');
+    await expect(answer).resolves.toBe('Ada');
+  });
+});

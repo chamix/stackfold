@@ -1,0 +1,35 @@
+{
+  "name": "{{{projectName}}}",
+  "version": "0.1.0",
+  "description": "{{{description}}}",
+{{#if author}}  "author": "{{{author}}}",
+{{/if}}  "type": "module",
+  "bin": {
+    "{{{binName}}}": "dist/cli/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/cli/index.js",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2",
+    "commander": "^15.0.0",
+    "cosmiconfig": "^10.0.1",
+    "execa": "^10.0.1",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

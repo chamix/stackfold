@@ -1,0 +1,26 @@
+/**
+ * Ports: the capabilities the commands need from the outside world, declared
+ * as interfaces so `cli/` depends on abstractions and `infra/` provides the
+ * concrete adapters (dependency inversion). Nothing in here imports a library.
+ */
+
+/** Asks the user for a line of text. */
+export interface Prompter {
+  ask(message: string): Promise<string>;
+}
+
+/** Runs a child process and resolves with its standard output. Rejects when it cannot run or exits non-zero. */
+export interface ProcessRunner {
+  run(command: string, args: string[]): Promise<string>;
+}
+
+/** A configuration file found on disk, before it is validated. */
+export interface LoadedConfig {
+  filepath: string;
+  config: unknown;
+}
+
+/** Finds the project configuration, searching upward from a directory. Resolves `undefined` when there is none. */
+export interface ConfigStore {
+  load(searchFrom: string): Promise<LoadedConfig | undefined>;
+}

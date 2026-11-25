@@ -1,0 +1,38 @@
+/**
+ * The configuration contract: a zod schema, its defaults and the error raised
+ * for an invalid file. Pure: no I/O, so it is tested without touching the disk.
+ */
+import { z } from 'zod';
+
+export const DEFAULT_GREETING = 'Hello';
+
+/** Unknown keys are rejected so a typo in a config file is reported instead of silently ignored. */
+const configSchema = z.strictObject({
+  greeting: z.string().trim().min(1).default(DEFAULT_GREETING),
+  times: z.number().int().positive().default(1),
+  shout: z.boolean().default(false),
+});
+
+export type Config = z.infer<typeof configSchema>;
+
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
+/**
+ * Validates a raw configuration value and fills in the defaults. `raw` is
+ * `undefined` when no file was found, which yields the defaults. `source` is
+ * the file the value came from and is only used in the error message.
+ */
+export function parseConfig(raw: unknown, source?: string): Config {
+  const result = configSchema.safeParse(raw ?? {});
+  if (result.success) return result.data;
+  const where = source === undefined ? '' : ` in ${source}`;
+  const details = result.error.issues
+    .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+    .join('; ');
+  throw new ConfigError(`Invalid configuration${where}: ${details}`);
+}

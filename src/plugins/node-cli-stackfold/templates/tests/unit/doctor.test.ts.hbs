@@ -1,0 +1,52 @@
+import { Command } from 'commander';
+import { describe, expect, it } from 'vitest';
+import { registerDoctorCommand, runDoctor } from '../../src/cli/commands/doctor.js';
+import type { ProcessRunner } from '../../src/core/ports.js';
+
+// The process runner is an in-memory fake: these tests cover the command logic.
+// The real execa adapter runs in tests/integration/cli.test.ts.
+
+function fakeRunner(result: { stdout: string } | { failure: Error }) {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const runner: ProcessRunner = {
+    run: async (command, args) => {
+      calls.push({ command, args });
+      if ('failure' in result) throw result.failure;
+      return result.stdout;
+    },
+  };
+  return { runner, calls };
+}
+
+describe('doctor', () => {
+  it('asks the process runner for "node --version" and prints the trimmed result', async () => {
+    const { runner, calls } = fakeRunner({ stdout: 'v22.18.0\n' });
+    const stdout: string[] = [];
+    await runDoctor({ processRunner: runner, stdout: (line) => stdout.push(line) });
+    expect(calls).toEqual([{ command: 'node', args: ['--version'] }]);
+    expect(stdout).toEqual(['node: v22.18.0']);
+  });
+
+  it('fails with a clear error that keeps the cause when the process cannot run, and prints nothing', async () => {
+    const failure = new Error('spawn node ENOENT');
+    const { runner } = fakeRunner({ failure });
+    const stdout: string[] = [];
+    const thrown = await runDoctor({ processRunner: runner, stdout: (line) => stdout.push(line) }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('Could not run "node --version": spawn node ENOENT');
+    expect((thrown as Error).cause).toBe(failure);
+    expect(stdout).toEqual([]);
+  });
+
+  it('is registered as the "doctor" command', async () => {
+    const { runner } = fakeRunner({ stdout: 'v22.18.0' });
+    const stdout: string[] = [];
+    const program = new Command();
+    registerDoctorCommand(program, { processRunner: runner, stdout: (line) => stdout.push(line) });
+    await program.parseAsync(['doctor'], { from: 'user' });
+    expect(stdout).toEqual(['node: v22.18.0']);
+  });
+});

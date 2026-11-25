@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+/**
+ * Composition root: the only place that creates the concrete adapters from
+ * `infra/` and hands them to the commands in `cli/`. It also maps any error a
+ * command throws to a message on stderr and a non-zero exit code.
+ */
+import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CosmiconfigConfigStore } from '../infra/configStore.js';
+import { ExecaProcessRunner } from '../infra/processRunner.js';
+import { InquirerPrompter } from '../infra/prompter.js';
+import { registerDoctorCommand } from './commands/doctor.js';
+import { registerGreetCommand } from './commands/greet.js';
+
+const BIN_NAME = '{{{binName}}}';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(here, '../../package.json'), 'utf8')) as { version: string };
+
+function reportError(error: unknown): void {
+  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  // DEBUG=1 adds the stack trace; it is never printed otherwise.
+  if (process.env['DEBUG'] === '1' && error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
+}
+
+const program = new Command();
+
+program.name(BIN_NAME).description('{{{description}}}').version(version);
+
+registerGreetCommand(program, {
+  prompter: new InquirerPrompter(),
+  configStore: new CosmiconfigConfigStore(BIN_NAME),
+  canPrompt: () => Boolean(process.stdin.isTTY),
+  cwd: () => process.cwd(),
+  stdout: (line) => console.log(line),
+});
+
+registerDoctorCommand(program, {
+  processRunner: new ExecaProcessRunner(),
+  stdout: (line) => console.log(line),
+});
+
+try {
+  await program.parseAsync();
+} catch (error) {
+  reportError(error);
+  process.exitCode = 1;
+}
