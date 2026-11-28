@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-11-28
+
+### Added
+
+- **`node-cli-stackfold`** (Node CLI), a new built-in plugin: a Node.js +
+  TypeScript command-line app with the same stack and layered structure as
+  stackfold (`commander`, `@inquirer/prompts`, `execa`, `cosmiconfig` and `zod`,
+  wired as ports and adapters). It asks for the project name, description,
+  command name and author, and generates two sample commands (`greet` and
+  `doctor`), config file support, unit tests on in-memory fakes and an
+  integration test that runs the built binary. The generated project requires
+  Node.js 22.18.0 or later.
+
+### Changed
+
+- Releases now use npm staged publishing: the release workflow uploads the
+  package to a staging area, and it can be installed only after a maintainer
+  approves it with two-factor authentication. The GitHub Release is created as a
+  draft and published after that approval.
+
+### Fixed
+
+- **`electron-stackfold` wrote the author name JSON-escaped in `LICENSE`.** Quotes
+  and backslashes appeared with an extra backslash. The name is now written as
+  typed, matching `electron-ts`. `package.json` escaping is unchanged.
+- The standalone HTML output of `web-app-stackfold` (with or without the intro) no
+  longer includes an empty `<script>` block whose only content was a comment
+  pointing to a file that is not part of the generated project.
+
 ## [2.6.1] - 2026-11-23
 
 ### Fixed
