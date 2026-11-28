@@ -267,6 +267,38 @@ describe('electron-stackfold vs. electron-ts — input parity (constraints + HTM
   });
 
   /**
+   * FIX-008: LICENSE is plain text, so the author must appear exactly as
+   * typed; package.json is JSON, so the same value must round-trip through
+   * its escaping.
+   */
+  it('author with quotes/backslash/ampersand/angle brackets: LICENSE is raw and byte-identical to electron-ts, package.json round-trips (FIX-008)', async () => {
+    const { electronTs, electronStackfold } = makePlugins();
+    const author = 'Ana "La Jefa" \\ Perez & <Co>';
+    const answers: Answers = {
+      appName: 'PlainApp',
+      description: 'd',
+      author,
+      includeSettings: false,
+      includeSkins: false,
+      includeAboutHelp: false,
+    };
+
+    const tsResult = await run(electronTs, answers);
+    const stackfoldResult = await run(electronStackfold, answers);
+    expect(tsResult.ok).toBe(true);
+    expect(stackfoldResult.ok).toBe(true);
+    if (!tsResult.ok || !stackfoldResult.ok) return;
+
+    const tsTree = relativeTree(tsResult.files);
+    const stackfoldTree = relativeTree(stackfoldResult.files);
+
+    expect(stackfoldTree.get('LICENSE')).toContain(` ${author}\n`);
+    expect(stackfoldTree.get('LICENSE')).toBe(tsTree.get('LICENSE'));
+    const pkg = JSON.parse(stackfoldTree.get('package.json') ?? '') as { author?: string };
+    expect(pkg.author).toBe(author);
+  });
+
+  /**
    * Invariant 5 (aggregate additivity check, spot-checked here): plain text,
    * no HTML-special characters, no padding — the generated tree must be
    * exactly what `electron-ts` (untouched by this fix) produces, same as it

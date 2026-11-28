@@ -174,7 +174,7 @@ export default defineScaffold({
     file('package.json', PACKAGE_JSON_TEMPLATE, { jsonEscapeKeys: ['appName', 'description', 'author'] }),
     file('README.md', README_TEMPLATE),
     file('.gitignore', GITIGNORE_TEMPLATE),
-    file('LICENSE', LICENSE_TEMPLATE, { jsonEscapeKeys: ['author'], when: WHEN_AUTHOR_PROVIDED }),
+    file('LICENSE', LICENSE_TEMPLATE, { when: WHEN_AUTHOR_PROVIDED }),
     file('tsconfig.json', TSCONFIG_JSON_TEMPLATE, { when: WHEN_NOT_SETTINGS_OR_SKINS }),
     file('tsconfig.base.json', TSCONFIG_BASE_JSON_TEMPLATE, { when: WHEN_SETTINGS_OR_SKINS }),
     file('tsconfig.main.json', TSCONFIG_MAIN_JSON_TEMPLATE, { when: WHEN_SETTINGS_OR_SKINS }),
