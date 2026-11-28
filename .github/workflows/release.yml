@@ -9,10 +9,11 @@ permissions: {}
 
 jobs:
   publish:
-    name: publish to npm
+    name: stage on npm
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: npm-publish          # manual approval gate; must match the npm trusted-publisher config
+    # Not the approval gate: a staged version is approved on npm, with 2FA.
+    environment: npm-publish          # part of the trusted-publisher contract; must match the npm config
     permissions:
       contents: read
       id-token: write                 # required for OIDC trusted publishing
@@ -21,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # npm publish can't be cleanly undone: refuse tags that aren't on main.
+      # A released version can't be cleanly undone: refuse tags that aren't on main.
       - name: Tag must point at a commit on main
         run: |
           git fetch origin main
@@ -29,9 +30,19 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc      # 24 -> bundled npm >= 11.5.1 (required for OIDC)
+          node-version-file: .nvmrc      # the bundled npm is checked by the next step
           registry-url: https://registry.npmjs.org
           # no dependency cache on purpose: release jobs shouldn't trust restored caches
+
+      # Fail closed, before anything runs: no upgrading npm here, and no other way to release.
+      - name: npm must support staged publishing
+        run: |
+          required=11.15.0
+          current="$(npm --version)"
+          if [ "$(printf '%s\n' "$required" "$current" | sort -V | head -n1)" != "$required" ]; then
+            echo "::error::npm $current does not support staged publishing (needs >= $required)"
+            exit 1
+          fi
 
       - run: npm ci
 
@@ -42,12 +53,14 @@ jobs:
       - run: npm test
       - run: npm run smoke:pack
 
-      - name: Publish
+      # Nothing is installable until a maintainer approves the staged version.
+      # The dist-tag chosen here can't be changed afterwards.
+      - name: Stage for approval on npm
         run: |
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            npm publish --tag next       # prerelease: never becomes "latest"
+            npm stage publish --tag next       # prerelease: never becomes "latest"
           else
-            npm publish
+            npm stage publish
           fi
 
   # Separate job so the publish job keeps read-only repo access: only this one
@@ -64,7 +77,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Create release
+      # A draft: the public announcement must not precede availability on the registry.
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -77,11 +91,12 @@ jobs:
             found { print }
           ' CHANGELOG.md > notes.md
 
-          flags=(--verify-tag)
+          flags=(--verify-tag --draft)
+          publish_draft="gh release edit $GITHUB_REF_NAME --draft=false"
           if [[ "$version" == *-* ]]; then
             flags+=(--prerelease)
           else
-            flags+=(--latest)
+            publish_draft+=" --latest"   # run by hand: a draft can't be marked latest
           fi
 
           if grep -q '[^[:space:]]' notes.md; then
@@ -91,3 +106,13 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
               --generate-notes "${flags[@]}"
           fi
+
+          {
+            echo "### Pending manual steps for $GITHUB_REF_NAME"
+            echo
+            echo "1. Fetch the staged tarball: \`npm stage list stackfold\`, \`npm stage view <stage-id>\`, then \`npm stage download <stage-id>\`."
+            echo "2. In an empty temporary folder, install it: \`npm install <path-to-the-downloaded-tgz>\`."
+            echo "3. There, run the installed binary: \`npx --no-install stackfold --version\` and \`npx --no-install stackfold list\`."
+            echo "4. Only if all of that works, approve it on npm (asks for 2FA): \`npm stage approve <stage-id>\`. Otherwise run \`npm stage reject <stage-id>\`, delete the draft release and fix."
+            echo "5. Once npm shows it as available, publish the draft GitHub Release: \`$publish_draft\`."
+          } >> "$GITHUB_STEP_SUMMARY"

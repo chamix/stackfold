@@ -335,6 +335,15 @@ describe('web-app-stackfold plugin — appType: "standalone-html" (the degenerat
     }
   });
 
+  it.each([true, false])(
+    'index.html carries no internal reference and no script block (includeStackfoldIntro: %s) (FIX-009)',
+    async (includeStackfoldIntro) => {
+      const html = await fileContent({ ...BASE_STANDALONE, includeStackfoldIntro }, 'index.html');
+      expect(html).not.toContain('functional_domain');
+      expect(html).not.toContain('<script');
+    }
+  );
+
   // Task 050 (.agents/specs/050-web-app-stackfold-intro-content.md
   // §Step 1) — the opt-out intro block's safety net: `false` must be
   // byte-identical to today's (flag-omitted) output.

@@ -60,7 +60,8 @@ beforeAll(async () => {
   }
   distFiles = listFilesRecursive(DIST_DIR, REPO_ROOT);
   manifestPaths = new Set(await packedManifestPaths());
-});
+  // The real `npm pack` takes ~10 s on Windows under load, past the default hook timeout.
+}, 60_000);
 
 describe('npm pack manifest (FIX-006)', () => {
   it('packages every .hbs template and scaffold.json found under dist/', () => {

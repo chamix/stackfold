@@ -1,7 +1,12 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { synth } from '../../authoring/synth.js';
 import { compileScaffold, type ScaffoldDefinition } from '../../core/authoring.js';
 import { JsonLogicExpressionEvaluator } from '../../infra/expressionEvaluator.js';
 import definition, { APP_TYPE_CHOICES } from './scaffold.js';
+import committedJson from './scaffold.json' with { type: 'json' };
 
 // Task 043 (.agents/specs/043-electron-stackfold-web-app-reauthor.md §0
 // point 2, SK-ADR-003): proves web-app-stackfold's own scaffold.ts compiles
@@ -65,5 +70,19 @@ describe('web-app-stackfold — its own ScaffoldDefinition compiles (SK-ADR-003)
     expect(appName?.validate).toBeTypeOf('function');
     expect(appName?.validate?.('')).not.toBe(true);
     expect(appName?.validate?.('Valid Name')).toBe(true);
+  });
+});
+
+describe('web-app-stackfold scaffold.json stays in sync with scaffold.ts', () => {
+  it('a real `synth()` of the authoring scaffold.ts deep-equals the committed scaffold.json', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'stackfold-web-app-stackfold-synth-check-'));
+    try {
+      const result = synth(definition as ScaffoldDefinition, { outDir: dir, evaluator: new JsonLogicExpressionEvaluator() });
+      const written = JSON.parse(await readFile(result.outputPath, 'utf8'));
+      expect(written).toEqual(committedJson);
+      expect(result.droppedClosures).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   });
 });

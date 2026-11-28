@@ -134,4 +134,46 @@ describe('electron-stackfold — real CLI validation end-to-end (scaffold.json r
     },
     60_000
   );
+
+  it(
+    'writes the author into LICENSE exactly as typed, and as valid JSON into package.json (FIX-008)',
+    async () => {
+      const targetDir = join(root, 'out-author');
+      const author = 'Ana "La Jefa" \\ Perez & <Co>';
+
+      const result = await runCli(
+        [
+          'init',
+          'electron-stackfold',
+          targetDir,
+          '--no-open',
+          '--answer',
+          'appName=OK App',
+          '--answer',
+          'description=A description',
+          '--answer',
+          `author=${author}`,
+          '--answer',
+          'includeSettings=false',
+          '--answer',
+          'includeSkins=false',
+          '--answer',
+          'includeAboutHelp=false',
+        ],
+        root,
+        fakeHome,
+        30_000
+      );
+
+      expect(result.code, `init failed:\n${result.output}`).toBe(0);
+
+      const license = await readFile(join(targetDir, 'LICENSE'), 'utf8');
+      const copyright = license.split(/\r?\n/).find((line) => line.startsWith('Copyright (c) '));
+      expect(copyright?.replace(/^Copyright \(c\) \d{4} /, '')).toBe(author);
+
+      const pkg = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as { author?: string };
+      expect(pkg.author).toBe(author);
+    },
+    60_000
+  );
 });
